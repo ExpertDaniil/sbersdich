@@ -16,6 +16,19 @@ CHECKER = PROJECT_ROOT / "scripts" / "http_regression.py"
 RUNNER = PROJECT_ROOT / "run_in_acp.sh"
 
 
+def bash_path(path):
+    """Return a path that Bash can use, including Git Bash on Windows."""
+
+    resolved = os.path.abspath(os.fspath(path))
+    if os.name != "nt":
+        return resolved
+    drive, tail = os.path.splitdrive(resolved)
+    normalized_tail = tail.replace("\\", "/")
+    if drive:
+        return f"/{drive[0].lower()}{normalized_tail}"
+    return normalized_tail
+
+
 def make_handler(vulnerable_login=False):
     class FakeApiHandler(BaseHTTPRequestHandler):
         items = {
@@ -177,27 +190,31 @@ class RuntimeRunnerTests(unittest.TestCase):
                 "if [ \"${1:-}\" = \"-m\" ] && [ \"${2:-}\" = \"pytest\" ]; then\n"
                 "  exit \"${FAKE_PYTEST_STATUS:-0}\"\n"
                 "fi\n"
-                f"exec {sys.executable} \"$@\"\n"
+                "exec \"$C04_TEST_PYTHON\" \"$@\"\n",
+                encoding="utf-8",
             )
             python_wrapper.chmod(0o755)
 
             uvicorn_wrapper = venv_bin / "uvicorn"
             uvicorn_wrapper.write_text(
                 "#!/bin/sh\n"
-                f"exec {sys.executable} {Path(__file__).resolve()} --serve\n"
+                "exec \"$C04_TEST_PYTHON\" \"$C04_TEST_SERVER\" --serve\n",
+                encoding="utf-8",
             )
             uvicorn_wrapper.chmod(0o755)
 
             env = os.environ.copy()
             env.update(
                 {
-                    "C04_OUTPUT_DIR": str(output),
+                    "C04_OUTPUT_DIR": bash_path(output),
                     "C04_PORT": str(reserve_port()),
+                    "C04_TEST_PYTHON": bash_path(sys.executable),
+                    "C04_TEST_SERVER": bash_path(Path(__file__).resolve()),
                     "FAKE_PYTEST_STATUS": str(pytest_status),
                 }
             )
             process = subprocess.run(
-                ["bash", str(RUNNER), str(app)],
+                ["bash", bash_path(RUNNER), bash_path(app)],
                 env=env,
                 text=True,
                 stdout=subprocess.PIPE,
@@ -205,7 +222,14 @@ class RuntimeRunnerTests(unittest.TestCase):
                 timeout=30,
                 check=False,
             )
-            report = json.loads((output / "http_report.json").read_text())
+            report_path = output / "http_report.json"
+            if not report_path.is_file():
+                self.fail(
+                    "runtime runner did not create http_report.json\n"
+                    f"stdout:\n{process.stdout}\n"
+                    f"stderr:\n{process.stderr}"
+                )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
             return process, report
 
     def test_runtime_runner_passes_only_when_both_suites_pass(self):

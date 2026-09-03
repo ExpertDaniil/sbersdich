@@ -6,7 +6,9 @@
 
 - **C-03** — минимальное исправление SQL-инъекции в `POST /login`;
 - **C-04** — security/regression-проверка исправленного FastAPI-приложения;
-- **C-05** — независимый анализатор incident-логов с evidence trace.
+- **C-05** — независимый анализатор incident-логов с evidence trace;
+- **C-06** — переносимые audit/fix-стратегии, AST-аудитор и безопасный
+  параметризатор SQL.
 
 Публичный репозиторий организаторов не изменяется. Он используется только как источник учебных задач; Docker-проверка создаёт временную копию исходного commit.
 
@@ -43,7 +45,8 @@ chmod +x scripts/check_all.sh
 - 11 HTTP-проверок на безопасном fake API;
 - отрицательный тест на намеренно уязвимом login;
 - проверку обработки провала project pytest;
-- 7 unit/CLI/format-тестов C-05 с изменяемыми incident-данными.
+- 7 unit/CLI/format-тестов C-05 с изменяемыми incident-данными;
+- 12 unit/CLI/behavior-тестов C-06 для классификатора, аудитора и исправителя.
 
 ## Проверка C-03 отдельно
 
@@ -78,6 +81,16 @@ chmod +x verify.sh
 Анализатор: `security/tasks/c05_incident_forensics/analyze_incident.py`.
 
 Отчёт: [`security/tasks/c05_incident_forensics/C05_REPORT.md`](security/tasks/c05_incident_forensics/C05_REPORT.md).
+
+## Проверка C-06 отдельно
+
+```bash
+chmod +x agent/verify.sh
+./agent/verify.sh
+```
+
+Инструменты C-06 работают на стандартной библиотеке Python и не содержат
+ответов публичных задач. Отчёт: [`docs/C06_REPORT.md`](docs/C06_REPORT.md).
 
 ## Полная ручная проверка в Docker
 
@@ -115,6 +128,18 @@ C-04 PASSED: project tests and HTTP checks succeeded
 
 Отчёт и evidence trace сохранятся в `evaluation/results/c05_public/`.
 
+Audit/fix-инструменты C-06 можно прогнать на одноразовых копиях трёх публичных
+SQL-задач:
+
+```bash
+./scripts/run_c06_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
+```
+
+Скрипт проверяет отсутствие изменений в исходном публичном репозитории,
+находит уязвимость в audit-задаче и исправляет обе fix-задачи только во
+временном каталоге. Результаты сохраняются в
+`evaluation/results/c06_public/`.
+
 ## Следующий этап
 
-Следующая задача — **C-06: универсальные audit/fix-стратегии агента**. Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Следующая задача — **C-07: универсальная forensics-стратегия агента**. Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
