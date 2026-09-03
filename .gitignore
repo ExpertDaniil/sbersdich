@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+*.log
+
+evaluation/results/*
+!evaluation/results/README.md
+
+submission.zip
+*.tar.gz

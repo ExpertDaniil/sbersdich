@@ -1,0 +1,97 @@
+# Sber SDI Challenge — автономный ИБ-агент
+
+Командный репозиторий решения для универсального автономного агента по кибербезопасности, работающего в изолированном контуре с локальной LLM.
+
+Сейчас в репозитории находятся проверенные учебные решения:
+
+- **C-03** — минимальное исправление SQL-инъекции в `POST /login`;
+- **C-04** — security/regression-проверка исправленного FastAPI-приложения.
+
+Публичный репозиторий организаторов не изменяется. Он используется только как источник учебных задач; Docker-проверка создаёт временную копию исходного commit.
+
+## Структура
+
+```text
+agent/                    код, который позже войдёт в submission
+  core/                   цикл агента, бюджет и контекст
+  tools/                  файловые и процессные инструменты
+  playbooks/              audit, fix, forensics и CTF-стратегии
+security/tasks/           учебные ИБ-разборы C-03, C-04, C-05...
+evaluation/               тестовый стенд, дополнительные задачи и результаты
+docs/                     архитектура, допущения и дорожная карта
+scripts/                  единые команды проверки
+```
+
+Подробности: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Быстрая проверка без Docker
+
+Требуются Bash и Python 3.12+.
+
+Из корня репозитория:
+
+```bash
+chmod +x scripts/check_all.sh
+./scripts/check_all.sh
+```
+
+Команда выполняет:
+
+- 5 unit/security-тестов C-03;
+- 4 теста проверяющего контура C-04;
+- 11 HTTP-проверок на безопасном fake API;
+- отрицательный тест на намеренно уязвимом login;
+- проверку обработки провала project pytest.
+
+## Проверка C-03 отдельно
+
+```bash
+cd security/tasks/c03_fix_sqli_login
+chmod +x verify.sh
+./verify.sh
+```
+
+Готовый безопасный файл: `security/tasks/c03_fix_sqli_login/routers/auth.py`.
+
+Отчёт: [`security/tasks/c03_fix_sqli_login/C03_REPORT.md`](security/tasks/c03_fix_sqli_login/C03_REPORT.md).
+
+## Проверка C-04 отдельно
+
+```bash
+cd security/tasks/c04_regression_verification
+chmod +x verify_package.sh
+./verify_package.sh
+```
+
+Отчёт: [`security/tasks/c04_regression_verification/C04_REPORT.md`](security/tasks/c04_regression_verification/C04_REPORT.md).
+
+## Полная ручная проверка в Docker
+
+Нужны Docker, Git, Bash, `patch` и локальная копия публичного репозитория организаторов.
+
+```bash
+git clone https://github.com/SecureIntelligent/UniversalAgenticCompetitionPublic.git
+./scripts/run_c03_c04_docker.sh /absolute/path/to/UniversalAgenticCompetitionPublic
+```
+
+Скрипт:
+
+1. проверяет, что передан Git-репозиторий;
+2. экспортирует его текущий commit во временный каталог;
+3. применяет исправление C-03 только к временной копии;
+4. собирает образ на основе `secureintelligent/acp`;
+5. запускает C-04 с новой PostgreSQL и новым Uvicorn-процессом;
+6. сохраняет журналы в `evaluation/results/c04_manual/`;
+7. удаляет временную копию.
+
+Исходный публичный репозиторий и его remote не меняются.
+
+Успешный результат заканчивается строкой:
+
+```text
+C-04 PASSED: project tests and HTTP checks succeeded
+```
+
+## Следующий этап
+
+Следующая задача — **C-05: форензика логов**. Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
