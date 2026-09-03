@@ -20,7 +20,8 @@
 
 - `c03_fix_sqli_login/` — безопасный `auth.py`, patch, тесты и отчёт;
 - `c04_regression_verification/` — runner, HTTP-проверки и матрица регрессии;
-- `c05_incident_forensics/` — появится следующим.
+- `c05_incident_forensics/` — независимый анализатор, formatter, validator и
+  вариативные тесты корреляции логов.
 
 Эти материалы обучают и проверяют метод решения. Публичные ответы нельзя переносить в system prompt или боевую логику агента.
 

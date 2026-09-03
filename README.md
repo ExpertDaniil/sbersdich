@@ -5,7 +5,8 @@
 Сейчас в репозитории находятся проверенные учебные решения:
 
 - **C-03** — минимальное исправление SQL-инъекции в `POST /login`;
-- **C-04** — security/regression-проверка исправленного FastAPI-приложения.
+- **C-04** — security/regression-проверка исправленного FastAPI-приложения;
+- **C-05** — независимый анализатор incident-логов с evidence trace.
 
 Публичный репозиторий организаторов не изменяется. Он используется только как источник учебных задач; Docker-проверка создаёт временную копию исходного commit.
 
@@ -41,7 +42,8 @@ chmod +x scripts/check_all.sh
 - 4 теста проверяющего контура C-04;
 - 11 HTTP-проверок на безопасном fake API;
 - отрицательный тест на намеренно уязвимом login;
-- проверку обработки провала project pytest.
+- проверку обработки провала project pytest;
+- 7 unit/CLI/format-тестов C-05 с изменяемыми incident-данными.
 
 ## Проверка C-03 отдельно
 
@@ -64,6 +66,18 @@ chmod +x verify_package.sh
 ```
 
 Отчёт: [`security/tasks/c04_regression_verification/C04_REPORT.md`](security/tasks/c04_regression_verification/C04_REPORT.md).
+
+## Проверка C-05 отдельно
+
+```bash
+cd security/tasks/c05_incident_forensics
+chmod +x verify.sh
+./verify.sh
+```
+
+Анализатор: `security/tasks/c05_incident_forensics/analyze_incident.py`.
+
+Отчёт: [`security/tasks/c05_incident_forensics/C05_REPORT.md`](security/tasks/c05_incident_forensics/C05_REPORT.md).
 
 ## Полная ручная проверка в Docker
 
@@ -92,6 +106,15 @@ git clone https://github.com/SecureIntelligent/UniversalAgenticCompetitionPublic
 C-04 PASSED: project tests and HTTP checks succeeded
 ```
 
+Публичную C-05 можно проверить отдельно, также без изменения исходного
+репозитория организаторов:
+
+```bash
+./scripts/run_c05_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
+```
+
+Отчёт и evidence trace сохранятся в `evaluation/results/c05_public/`.
+
 ## Следующий этап
 
-Следующая задача — **C-05: форензика логов**. Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Следующая задача — **C-06: универсальные audit/fix-стратегии агента**. Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
