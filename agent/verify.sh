@@ -9,11 +9,13 @@ cd "$REPO_DIR"
 
 run_python -m py_compile \
     agent/strategies.py \
+    agent/validators.py \
     agent/tools/forensics.py \
     agent/tools/security_scan.py \
     agent/tools/sql_parameterize.py \
     agent/tests/test_audit_fix_tools.py \
-    agent/tests/test_forensics_tools.py
+    agent/tests/test_forensics_tools.py \
+    agent/tests/test_validators.py
 run_python -m unittest discover -s agent/tests -p 'test_*.py' -v
 
-printf '%s\n' "C-06/C-07 agent tool verification passed"
+printf '%s\n' "C-06/C-08 agent component verification passed"

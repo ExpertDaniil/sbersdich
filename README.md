@@ -9,7 +9,9 @@
 - **C-05** — независимый анализатор incident-логов с evidence trace;
 - **C-06** — переносимые audit/fix-стратегии, AST-аудитор и безопасный
   параметризатор SQL;
-- **C-07** — универсальная forensics-стратегия, inventory и evidence graph.
+- **C-07** — универсальная forensics-стратегия, inventory и evidence graph;
+- **C-08** — общий validation engine для артефактов, изменений, синтаксиса и
+  тестовых команд.
 
 Публичный репозиторий организаторов не изменяется. Он используется только как источник учебных задач; Docker-проверка создаёт временную копию исходного commit.
 
@@ -49,7 +51,9 @@ chmod +x scripts/check_all.sh
 - 7 unit/CLI/format-тестов C-05 с изменяемыми incident-данными;
 - 12 unit/CLI/behavior-тестов C-06 для классификатора, аудитора и исправителя;
 - 12 вариативных тестов C-07 для inventory, корреляции, XFF, evidence graph и
-  строгого отчёта.
+  строгого отчёта;
+- 17 policy/CLI-тестов C-08 для snapshot, артефактов, syntax, timeout и
+  разрешённых изменений.
 
 ## Проверка C-03 отдельно
 
@@ -113,6 +117,24 @@ python3 -m agent.tools.forensics analyze /app \
 
 Отчёт этапа: [`docs/C07_REPORT.md`](docs/C07_REPORT.md).
 
+## Проверка C-08 отдельно
+
+```bash
+./agent/verify.sh
+```
+
+Минимальный validation lifecycle:
+
+```bash
+python3 -m agent.validators snapshot /app --output /tmp/task-baseline.json
+python3 -m agent.validators validate /app \
+  --mode audit \
+  --baseline /tmp/task-baseline.json \
+  --artifact security-report=security_report.json
+```
+
+Подробности: [`docs/C08_REPORT.md`](docs/C08_REPORT.md).
+
 ## Полная ручная проверка в Docker
 
 Нужны Docker, Git, Bash, `patch` и локальная копия публичного репозитория организаторов.
@@ -170,6 +192,13 @@ Forensics-инструмент C-07 проверяется без чтения �
 Исходные артефакты копируются во временный каталог. Строгий отчёт, evidence
 graph и техническая сводка сохраняются в `evaluation/results/c07_public/`.
 
+Общие политики C-08 проверяются на одноразовых копиях audit, двух fix и
+forensics-задачи:
+
+```bash
+./scripts/run_c08_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
+```
+
 ## Следующий этап
 
-Следующая задача — **C-08: универсальные валидаторы артефактов и результата**. Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Следующая задача — **C-09: основной цикл автономного агента**. Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).

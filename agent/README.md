@@ -9,7 +9,9 @@ C-06/C-07 реализованы:
 - playbook для режима аудита без изменения проекта;
 - playbook для минимального security-fix с обязательной проверкой;
 - forensics inventory, корреляционный профиль и evidence graph;
-- playbook для анализа инцидента без изменения доказательств.
+- playbook для анализа инцидента без изменения доказательств;
+- общий validation engine с baseline, режимными политиками, проверкой
+  артефактов, Python-синтаксиса и команд с timeout.
 
 Проверка компонентов:
 
@@ -23,8 +25,9 @@ C-06/C-07 реализованы:
 python3 -m agent.strategies "Find security vulnerabilities and write a report"
 python3 -m agent.tools.forensics inventory /app/incident
 python3 -m agent.tools.forensics analyze /app
+python3 -m agent.validators snapshot /app --output /tmp/task-baseline.json
 ```
 
-Цикл работы с локальной LLM, общие файловые/shell-инструменты и финальный
+Цикл работы с локальной LLM, ограниченные файловые/shell-инструменты и финальный
 `run.sh` будут добавлены на следующих этапах. Учебные решения из
 `security/tasks/` не копируются в submission.

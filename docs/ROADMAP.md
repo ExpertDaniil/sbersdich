@@ -9,8 +9,9 @@
 | C-05 | готово | независимый анализатор, validator, trace и 7 тестов |
 | C-06 | готово | audit/fix playbooks, AST-аудитор, asyncpg-fixer и 12 тестов |
 | C-07 | готово | inventory, forensics profile, evidence graph и 12 тестов |
-| C-08 | следующий | универсальные валидаторы артефактов |
-| C-09…C-16 | запланировано | benchmark, метрики, вариации и финальный ZIP |
+| C-08 | готово | baseline, policy engine, artifact/syntax/command checks и 17 тестов |
+| C-09 | следующий | основной цикл автономного агента |
+| C-10…C-16 | запланировано | tools, LLM-интеграция, benchmark и финальный ZIP |
 
 ## Выполнено в C-05
 
@@ -54,8 +55,24 @@
 Публичный runner читает только `environment/`, работает на временной копии и
 проверяет неизменность evidence и исходного репозитория.
 
-## Ближайший шаг: C-08
+## Выполнено в C-08
 
-Вынести проверку deliverable, изменённых путей, синтаксиса, доступных тестов и
-режима `audit=no writes` в общий слой валидаторов, который основной цикл агента
-сможет вызывать перед завершением каждой задачи.
+Создан `agent/validators.py`:
+
+- SHA-256 snapshot содержимого, типа и Unix mode файлов;
+- обнаружение добавленных, изменённых и удалённых путей;
+- строгие политики `audit`, `fix`, `forensics` и `general`;
+- защита tests/expected/solution/verifier и dependency manifests;
+- проверки exact text, JSON, security report и incident report;
+- AST-проверка Python без импорта проекта;
+- команды без shell-интерпретации, с timeout и ограничением вывода;
+- машиночитаемый validation report и коды возврата `0/1/2`;
+- нормализация symlink и Windows 8.3-путей.
+
+Добавлено 17 тестов и публичный runner на временных audit/fix/forensics-копиях.
+
+## Ближайший шаг: C-09
+
+Создать основной цикл агента: получить instruction, снять baseline,
+классифицировать режим, загрузить playbook, вызвать LLM/tools и повторять
+исправление до успешного validation report или исчерпания бюджета.

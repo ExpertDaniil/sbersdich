@@ -12,7 +12,7 @@ printf '%s\n' "[2/4] Checking C-04 regression package"
 printf '%s\n' "[3/4] Checking C-05 incident forensics"
 "$REPO_DIR/security/tasks/c05_incident_forensics/verify.sh"
 
-printf '%s\n' "[4/4] Checking C-06/C-07 agent tools"
+printf '%s\n' "[4/4] Checking C-06/C-08 agent components"
 "$REPO_DIR/agent/verify.sh"
 
 printf '%s\n' "All available security checks passed"

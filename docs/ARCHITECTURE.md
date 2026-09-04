@@ -13,8 +13,9 @@
   graph;
 - `playbooks/audit.md`, `playbooks/fix.md`, `playbooks/forensics.md` —
   реализованные стратегии;
+- `validators.py` — реализованные baseline snapshot, режимные политики,
+  форматы артефактов, syntax и команды с timeout;
 - `core/` — планируемый цикл «инструкция → действие → наблюдение → проверка»;
-- `validators.py` — планируемая проверка пути, формата, синтаксиса и тестов;
 - файловые и process-инструменты — планируются вместе с основным циклом.
 
 Общую Harbor-обёртку `agent.py` организаторы добавляют или перезаписывают сами, поэтому собственная логика не должна зависеть от её модификации.
@@ -43,8 +44,9 @@
 - `scripts/run_c03_c04_docker.sh` проводит Docker-проверку C-03/C-04 во
   временной копии публичной задачи;
 - `scripts/run_c05_public.sh`, `scripts/run_c06_public.sh` и
-  `scripts/run_c07_public.sh` проверяют C-05…C-07 на одноразовых копиях
-  публичных данных и кода.
+  `scripts/run_c07_public.sh` проверяют C-05…C-07 на одноразовых копиях;
+- `scripts/run_c08_public.sh` применяет единые validation policies к публичным
+  audit/fix/forensics-копиям.
 
 ## Поток разработки
 
