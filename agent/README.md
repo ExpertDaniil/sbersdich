@@ -1,13 +1,15 @@
 # Agent source
 
-Здесь находится переносимая часть будущего автономного агента. На этапе C-06
-реализованы:
+Здесь находится переносимая часть будущего автономного агента. На этапах
+C-06/C-07 реализованы:
 
 - детерминированная классификация задач `audit`, `fix`, `forensics` и `general`;
 - AST-аудитор Python-кода для поиска tainted SQL-конструкций;
 - ограниченный исправитель SQL-инъекций для поддерживаемых вызовов asyncpg;
 - playbook для режима аудита без изменения проекта;
-- playbook для минимального security-fix с обязательной проверкой.
+- playbook для минимального security-fix с обязательной проверкой;
+- forensics inventory, корреляционный профиль и evidence graph;
+- playbook для анализа инцидента без изменения доказательств.
 
 Проверка компонентов:
 
@@ -19,6 +21,8 @@
 
 ```bash
 python3 -m agent.strategies "Find security vulnerabilities and write a report"
+python3 -m agent.tools.forensics inventory /app/incident
+python3 -m agent.tools.forensics analyze /app
 ```
 
 Цикл работы с локальной LLM, общие файловые/shell-инструменты и финальный

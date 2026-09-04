@@ -80,9 +80,9 @@ def classify_instruction(instruction: str) -> StrategyDecision:
             mode="forensics",
             should_modify_project=False,
             expected_artifacts=("incident_report.txt",),
-            playbook="",
-            confidence="medium",
-            reason="instruction describes incident evidence; C-07 will attach its playbook",
+            playbook="agent/playbooks/forensics.md",
+            confidence="high",
+            reason="instruction requests correlation of incident evidence",
         )
     return StrategyDecision(
         mode="general",

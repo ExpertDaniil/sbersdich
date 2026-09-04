@@ -9,7 +9,10 @@
 - `strategies.py` — реализованная детерминированная классификация задачи;
 - `tools/security_scan.py` — реализованный AST-аудитор source-to-SQL-sink;
 - `tools/sql_parameterize.py` — реализованный ограниченный asyncpg-fixer;
-- `playbooks/audit.md`, `playbooks/fix.md` — реализованные стратегии;
+- `tools/forensics.py` — реализованные inventory, incident-profile и evidence
+  graph;
+- `playbooks/audit.md`, `playbooks/fix.md`, `playbooks/forensics.md` —
+  реализованные стратегии;
 - `core/` — планируемый цикл «инструкция → действие → наблюдение → проверка»;
 - `validators.py` — планируемая проверка пути, формата, синтаксиса и тестов;
 - файловые и process-инструменты — планируются вместе с основным циклом.
@@ -39,8 +42,9 @@
 - `scripts/check_all.sh` проверяет автономные пакеты;
 - `scripts/run_c03_c04_docker.sh` проводит Docker-проверку C-03/C-04 во
   временной копии публичной задачи;
-- `scripts/run_c05_public.sh` и `scripts/run_c06_public.sh` проверяют C-05/C-06
-  на одноразовых копиях публичных данных и кода.
+- `scripts/run_c05_public.sh`, `scripts/run_c06_public.sh` и
+  `scripts/run_c07_public.sh` проверяют C-05…C-07 на одноразовых копиях
+  публичных данных и кода.
 
 ## Поток разработки
 

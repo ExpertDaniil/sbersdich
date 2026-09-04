@@ -8,7 +8,8 @@
 - **C-04** — security/regression-проверка исправленного FastAPI-приложения;
 - **C-05** — независимый анализатор incident-логов с evidence trace;
 - **C-06** — переносимые audit/fix-стратегии, AST-аудитор и безопасный
-  параметризатор SQL.
+  параметризатор SQL;
+- **C-07** — универсальная forensics-стратегия, inventory и evidence graph.
 
 Публичный репозиторий организаторов не изменяется. Он используется только как источник учебных задач; Docker-проверка создаёт временную копию исходного commit.
 
@@ -46,7 +47,9 @@ chmod +x scripts/check_all.sh
 - отрицательный тест на намеренно уязвимом login;
 - проверку обработки провала project pytest;
 - 7 unit/CLI/format-тестов C-05 с изменяемыми incident-данными;
-- 12 unit/CLI/behavior-тестов C-06 для классификатора, аудитора и исправителя.
+- 12 unit/CLI/behavior-тестов C-06 для классификатора, аудитора и исправителя;
+- 12 вариативных тестов C-07 для inventory, корреляции, XFF, evidence graph и
+  строгого отчёта.
 
 ## Проверка C-03 отдельно
 
@@ -91,6 +94,24 @@ chmod +x agent/verify.sh
 
 Инструменты C-06 работают на стандартной библиотеке Python и не содержат
 ответов публичных задач. Отчёт: [`docs/C06_REPORT.md`](docs/C06_REPORT.md).
+
+## Проверка C-07 отдельно
+
+Тесты C-07 входят в общий пакет агента:
+
+```bash
+./agent/verify.sh
+```
+
+Пример запуска forensics-профиля:
+
+```bash
+python3 -m agent.tools.forensics analyze /app \
+  --output /app/incident_report.txt \
+  --trace /tmp/evidence_graph.json
+```
+
+Отчёт этапа: [`docs/C07_REPORT.md`](docs/C07_REPORT.md).
 
 ## Полная ручная проверка в Docker
 
@@ -140,6 +161,15 @@ SQL-задач:
 временном каталоге. Результаты сохраняются в
 `evaluation/results/c06_public/`.
 
+Forensics-инструмент C-07 проверяется без чтения публичных expected/solution:
+
+```bash
+./scripts/run_c07_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
+```
+
+Исходные артефакты копируются во временный каталог. Строгий отчёт, evidence
+graph и техническая сводка сохраняются в `evaluation/results/c07_public/`.
+
 ## Следующий этап
 
-Следующая задача — **C-07: универсальная forensics-стратегия агента**. Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Следующая задача — **C-08: универсальные валидаторы артефактов и результата**. Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).

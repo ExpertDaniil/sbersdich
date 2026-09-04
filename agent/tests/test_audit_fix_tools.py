@@ -240,13 +240,13 @@ class StrategyRoutingTests(unittest.TestCase):
         self.assertTrue(decision.should_modify_project)
         self.assertEqual(decision.playbook, "agent/playbooks/fix.md")
 
-    def test_forensics_is_reserved_for_next_playbook(self):
+    def test_forensics_contract_selects_implemented_playbook(self):
         decision = classify_instruction(
             "Review the incident logs and write /app/incident_report.txt."
         )
         self.assertEqual(decision.mode, "forensics")
         self.assertFalse(decision.should_modify_project)
-        self.assertEqual(decision.playbook, "")
+        self.assertEqual(decision.playbook, "agent/playbooks/forensics.md")
 
 
 if __name__ == "__main__":
