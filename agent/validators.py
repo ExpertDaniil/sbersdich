@@ -158,9 +158,26 @@ class ValidationReport:
 
 
 def canonical_path(path: Path | str) -> Path:
-    """Expand symlinks and Windows 8.3 aliases for stable path comparison."""
+    """Canonicalize existing ancestors before appending missing path parts.
 
-    return Path(os.path.realpath(os.fspath(path)))
+    On Windows, resolving a non-existent child in one operation may preserve a
+    long path while resolving its existing parent yields an 8.3 alias (or the
+    reverse).  That makes two paths to the same directory fail a containment
+    check.  Resolve the nearest existing ancestor once, then append the lexical
+    missing suffix so both sides use the same representation.
+    """
+
+    candidate = Path(os.path.abspath(os.fspath(path)))
+    missing_parts: list[str] = []
+    existing = candidate
+    while not existing.exists() and not existing.is_symlink():
+        parent = existing.parent
+        if parent == existing:
+            break
+        missing_parts.append(existing.name)
+        existing = parent
+    resolved = existing.resolve(strict=False)
+    return resolved.joinpath(*reversed(missing_parts))
 
 
 def path_is_within(path: Path | str, root: Path | str) -> bool:

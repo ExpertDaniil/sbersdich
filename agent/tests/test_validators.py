@@ -18,6 +18,7 @@ from agent.validators import (  # noqa: E402
     ValidationError,
     ValidationPolicy,
     capture_snapshot,
+    canonical_path,
     compare_snapshots,
     load_snapshot,
     parse_snapshot_payload,
@@ -58,6 +59,16 @@ def make_project(root: Path) -> None:
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_canonical_missing_child_uses_existing_parent_representation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            child = canonical_path(root / "not-created" / "artifact.txt")
+            canonical_root = canonical_path(root)
+            self.assertEqual(
+                child.relative_to(canonical_root).as_posix(),
+                "not-created/artifact.txt",
+            )
+
     def test_snapshot_detects_added_modified_and_deleted_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

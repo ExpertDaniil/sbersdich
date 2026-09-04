@@ -11,7 +11,9 @@
   параметризатор SQL;
 - **C-07** — универсальная forensics-стратегия, inventory и evidence graph;
 - **C-08** — общий validation engine для артефактов, изменений, синтаксиса и
-  тестовых команд.
+  тестовых команд;
+- **C-09** — основной автономный цикл: structured actions, режимные инструменты,
+  бюджеты, retry и обязательная финальная валидация.
 
 Публичный репозиторий организаторов не изменяется. Он используется только как источник учебных задач; Docker-проверка создаёт временную копию исходного commit.
 
@@ -53,7 +55,9 @@ chmod +x scripts/check_all.sh
 - 12 вариативных тестов C-07 для inventory, корреляции, XFF, evidence graph и
   строгого отчёта;
 - 17 policy/CLI-тестов C-08 для snapshot, артефактов, syntax, timeout и
-  разрешённых изменений.
+  разрешённых изменений;
+- 19 сквозных тестов C-09 для action loop, audit/fix/forensics, повторной
+  валидации, ограничений путей и budget exhaustion.
 
 ## Проверка C-03 отдельно
 
@@ -135,6 +139,23 @@ python3 -m agent.validators validate /app \
 
 Подробности: [`docs/C08_REPORT.md`](docs/C08_REPORT.md).
 
+## Проверка C-09 отдельно
+
+```bash
+./agent/verify.sh
+```
+
+Пример полностью локального запуска без LLM:
+
+```bash
+mkdir -p /tmp/c09-app
+python3 -m agent.core.loop \
+  'Create a file at `/app/result.txt` whose content is exactly `done`.' \
+  --workdir /tmp/c09-app
+```
+
+Подробности: [`docs/C09_REPORT.md`](docs/C09_REPORT.md).
+
 ## Полная ручная проверка в Docker
 
 Нужны Docker, Git, Bash, `patch` и локальная копия публичного репозитория организаторов.
@@ -199,6 +220,15 @@ forensics-задачи:
 ./scripts/run_c08_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
 ```
 
+Полный C-09 loop можно прогнать по всем шести публичным instruction. Runner не
+читает `solution`/`expected`, работает только на временных копиях и проверяет,
+что публичный репозиторий не изменился:
+
+```bash
+./scripts/run_c09_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
+```
+
 ## Следующий этап
 
-Следующая задача — **C-09: основной цикл автономного агента**. Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Следующая задача — **C-10: безопасные общие filesystem/process-инструменты**.
+Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
