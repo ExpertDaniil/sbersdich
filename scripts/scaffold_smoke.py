@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 from pathlib import Path
 
-from agent.scaffold.bootstrap import build_default_application
-from agent.scaffold.contracts import KernelLimits
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from agent.scaffold.bootstrap import build_default_application  # noqa: E402
+from agent.scaffold.contracts import KernelLimits  # noqa: E402
 
 
 def main() -> int:

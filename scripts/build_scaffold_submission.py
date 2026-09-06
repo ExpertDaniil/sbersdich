@@ -5,9 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from agent.scaffold.packaging import build_submission
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from agent.scaffold.packaging import build_submission  # noqa: E402
 
 
 def main() -> int:
@@ -18,8 +22,7 @@ def main() -> int:
         default=Path("dist/test_govno_submission.zip"),
     )
     args = parser.parse_args()
-    repo_root = Path(__file__).resolve().parents[1]
-    result = build_submission(repo_root, args.output)
+    result = build_submission(REPO_ROOT, args.output)
     print(json.dumps(result.as_payload(), ensure_ascii=False, indent=2))
     return 0
 

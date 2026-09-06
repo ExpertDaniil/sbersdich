@@ -6,9 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
-from agent.scaffold.diagnostics import runtime_manifest
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from agent.scaffold.diagnostics import runtime_manifest  # noqa: E402
 
 
 def main() -> int:

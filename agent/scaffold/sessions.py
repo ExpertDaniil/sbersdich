@@ -81,8 +81,13 @@ class InteractiveSessionManager:
         process = self._process
         if process is None or process.stdout is None:
             return
+        reader = process.stdout
         try:
-            while chunk := process.stdout.read(1024):
+            while True:
+                read1 = getattr(reader, "read1", None)
+                chunk = read1(1024) if read1 is not None else reader.read(1)
+                if not chunk:
+                    return
                 with self._lock:
                     self._total_output += len(chunk)
                     self._captured.extend(chunk)
@@ -90,6 +95,17 @@ class InteractiveSessionManager:
                         del self._captured[:-MAX_SESSION_OUTPUT_BYTES]
         except (OSError, ValueError):
             return
+
+    def _wait_for_output(self, previous_total: int, timeout: float = 0.3) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                if self._total_output > previous_total:
+                    return
+            process = self._process
+            if process is None or process.poll() is not None:
+                return
+            time.sleep(0.01)
 
     def start(self, profile: SessionProfile, arguments: dict[str, Any], workdir: Path) -> dict[str, Any]:
         if self.active:
@@ -118,12 +134,13 @@ class InteractiveSessionManager:
         self._process = process
         self._profile = profile.name
         self._argv = tuple(argv)
-        self._captured.clear()
-        self._total_output = 0
+        with self._lock:
+            self._captured.clear()
+            self._total_output = 0
         self._started_at = time.monotonic()
         self._reader = threading.Thread(target=self._drain, daemon=True)
         self._reader.start()
-        time.sleep(0.05)
+        self._wait_for_output(0)
         return self.snapshot()
 
     def send(self, text: str) -> dict[str, Any]:
@@ -135,12 +152,14 @@ class InteractiveSessionManager:
             raise InteractiveSessionError(
                 f"session input exceeds {MAX_SESSION_INPUT_CHARS} characters"
             )
+        with self._lock:
+            previous_total = self._total_output
         try:
             self._process.stdin.write(text.encode("utf-8") + b"\n")
             self._process.stdin.flush()
         except OSError as error:
             raise InteractiveSessionError(f"cannot write to session: {error}") from error
-        time.sleep(0.05)
+        self._wait_for_output(previous_total)
         return self.snapshot()
 
     def snapshot(self) -> dict[str, Any]:
@@ -148,6 +167,7 @@ class InteractiveSessionManager:
         with self._lock:
             output = bytes(self._captured).decode("utf-8", errors="replace")
             total = self._total_output
+            captured_size = len(self._captured)
         return {
             "active": self.active,
             "profile": self._profile,
@@ -158,7 +178,7 @@ class InteractiveSessionManager:
                 round(time.monotonic() - self._started_at, 3) if self._started_at else 0.0
             ),
             "output_tail": output,
-            "output_truncated": total > len(self._captured),
+            "output_truncated": total > captured_size,
             "total_output_bytes": total,
         }
 

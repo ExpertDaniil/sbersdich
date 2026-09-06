@@ -24,7 +24,7 @@ def _default_workdir() -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("instruction", nargs="+", help="task instruction")
+    parser.add_argument("instruction", nargs="*", help="task instruction")
     parser.add_argument("--workdir", type=Path, default=_default_workdir())
     parser.add_argument("--deadline-seconds", type=float, default=300.0)
     parser.add_argument("--max-steps", type=int, default=20)
@@ -47,7 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     started = time.monotonic()
     try:
         if args.probe:
@@ -68,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
+        if not args.instruction:
+            parser.error("task instruction is required unless --probe is used")
         limits = KernelLimits(
             max_steps=args.max_steps,
             max_validations=args.max_validations,
