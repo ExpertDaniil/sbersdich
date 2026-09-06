@@ -9,7 +9,9 @@ C-09 реализует управляющую часть автономного
 - `contracts.py` — обязательные артефакты и exact-text контракт из instruction;
 - `playbooks.py` — ограниченная загрузка только Markdown playbook из `agent/`;
 - `tools.py` — режимный allowlist для C-06/C-07 инструментов и безопасной
-  записи exact-text файла.
+  записи exact-text файла;
+- `workspace.py` — C-10 bounded list/read/read-bytes/literal-search,
+  транзакционная подготовка unified patch и allowlisted process checks.
 
 Любой action driver реализует один метод:
 
@@ -21,6 +23,10 @@ def next_action(context: DriverContext) -> AgentAction: ...
 audit/fix/forensics/exact-file профили. OpenAI-compatible LLM adapter будет
 реализовывать тот же интерфейс на следующем интеграционном этапе, поэтому
 validation и safety-логика не будут дублироваться.
+
+`DriverContext.available_tools` содержит только схемы действий, разрешённых
+текущему режиму. Audit/forensics не получают patch или process, а fix/general
+получают их с workdir containment и независимой финальной валидацией.
 
 Локальный запуск:
 

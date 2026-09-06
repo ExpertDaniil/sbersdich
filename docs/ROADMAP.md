@@ -9,10 +9,11 @@
 | C-05 | готово | независимый анализатор, validator, trace и 7 тестов |
 | C-06 | готово | audit/fix playbooks, AST-аудитор, asyncpg-fixer и 12 тестов |
 | C-07 | готово | inventory, forensics profile, evidence graph и 12 тестов |
-| C-08 | готово | baseline, policy engine, artifact/syntax/command checks и 17 тестов |
+| C-08 | готово | baseline, policy engine, artifact/syntax/command checks и 18 тестов |
 | C-09 | готово | основной цикл, action protocol, бюджеты, retry и fail-closed |
-| C-10 | следующий | безопасные общие filesystem/process-инструменты |
-| C-11…C-16 | запланировано | LLM-интеграция, benchmark и финальный ZIP |
+| C-10 | готово | bounded filesystem, unified patch, process allowlist и 32 теста |
+| C-11 | следующий | адаптер локальной OpenAI-compatible LLM |
+| C-12…C-16 | запланировано | prompt policy, benchmark и финальный ZIP |
 
 ## Выполнено в C-05
 
@@ -70,7 +71,8 @@
 - машиночитаемый validation report и коды возврата `0/1/2`;
 - нормализация symlink и Windows 8.3-путей.
 
-Добавлено 17 тестов и публичный runner на временных audit/fix/forensics-копиях.
+Добавлено 18 тестов, включая Windows-regression для ещё не созданных путей, и
+публичный runner на временных audit/fix/forensics-копиях.
 
 ## Выполнено в C-09
 
@@ -92,9 +94,26 @@
 - публичный runner прогоняет все шесть instruction на временных копиях без
   чтения `solution`/`expected` и без изменения репозитория организаторов.
 
-## Ближайший шаг: C-10
+## Выполнено в C-10
 
-Добавить ограниченные общие инструменты чтения, поиска, patch и запуска команд,
-которые понадобятся LLM для неизвестных fix/forensics/CTF-задач. Каждый
-инструмент должен соблюдать workdir containment, защищённые пути, timeout и
-ограничение размера observation.
+Создан `agent/core/workspace.py` и расширен режимный registry:
+
+- bounded list, UTF-8 line read, hex/ASCII byte read и literal search;
+- пропуск `.git`, dependency caches и answer/verifier-каталогов;
+- единая безопасная обработка `/app`, Windows absolute/8.3 и relative paths;
+- strict unified diff только для существующих UTF-8 source-файлов;
+- запрет patch для tests, expected/solution/verifier, dependency manifests и
+  symlink-целей;
+- предварительная проверка всех patch hunks до первой записи, сохранение LF/CRLF
+  и file mode;
+- process allowlist для project checks без shell, с timeout, capped output и
+  удалением LLM credentials из child environment;
+- отдельный каталог action-схем в `DriverContext`, различный для каждого режима;
+- 32 security/integration-теста и публичный runner на временных копиях.
+
+## Ближайший шаг: C-11
+
+Реализовать action driver для локального OpenAI-compatible endpoint через
+`LOCAL_AGENT_MODEL`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`: строгий JSON action,
+учёт токенов, bounded history, retry на невалидном ответе и deterministic
+fallback без изменения C-08/C-10 safety-слоя.

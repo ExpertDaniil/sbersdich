@@ -251,6 +251,7 @@ class AgentLoop:
                     task_playbook=task_playbook,
                     validation_playbook=validation_playbook,
                     contract=contract,
+                    available_tools=registry.catalog(decision),
                     events=tuple(events),
                     last_validation=last_validation,
                     remaining_seconds=max(

@@ -13,7 +13,9 @@ C-06/C-07 реализованы:
 - общий validation engine с baseline, режимными политиками, проверкой
   артефактов, Python-синтаксиса и команд с timeout;
 - основной автономный цикл с action-протоколом, бюджетами, режимным allowlist,
-  повторной валидацией и детерминированным fallback-драйвером.
+  повторной валидацией и детерминированным fallback-драйвером;
+- bounded `list/read/read-bytes/search`, безопасный unified patch и allowlisted
+  process runner без shell-интерпретации.
 
 Проверка компонентов:
 
@@ -31,6 +33,6 @@ python3 -m agent.validators snapshot /app --output /tmp/task-baseline.json
 python3 -m agent.core.loop 'Audit /app and write security_report.json' --workdir /app
 ```
 
-Адаптер локальной LLM, общие ограниченные файловые/process-инструменты и
-финальный `run.sh` будут добавлены на следующих этапах. Учебные решения из
+Адаптер локальной LLM и финальный `run.sh` будут добавлены на следующих этапах.
+Учебные решения из
 `security/tasks/` не копируются в submission.

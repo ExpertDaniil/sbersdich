@@ -21,8 +21,9 @@
   локальной модели, учёт токенов и преобразование ответа в одно действие;
 - `core/contracts.py`, `core/playbooks.py`, `core/models.py` — task contract,
   безопасная загрузка стратегий и структурированный action-протокол;
-- `core/tools.py` — реализованный режимный allowlist для поддерживаемых
-  ИБ-инструментов; общие файловые и process-инструменты планируются в C-10.
+- `core/tools.py` — режимный allowlist и каталог action-схем для драйвера;
+- `core/workspace.py` — bounded list/read/search, безопасный unified patch и
+  allowlisted process runner с timeout и ограничением observation.
 
 Корневой `run.sh` запускает `agent.local_agent`. Общую Harbor-обёртку `agent.py`
 организаторы добавляют или перезаписывают сами, поэтому собственная логика не
@@ -57,6 +58,8 @@
   audit/fix/forensics-копиям.
 - `scripts/run_c09_public.sh` прогоняет единый агентный цикл по всем шести
   публичным instruction на одноразовых рабочих каталогах.
+- `scripts/run_c10_public.sh` проверяет read-only анализ и generic patch/process
+  на публичных environment-копиях без чтения answer-файлов.
 
 ## Поток разработки
 

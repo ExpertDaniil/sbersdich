@@ -53,6 +53,19 @@ class ToolResult:
 
 
 @dataclass(frozen=True)
+class ToolDefinition:
+    """Compact tool schema exposed to action drivers and the future LLM."""
+
+    name: str
+    description: str
+    parameters: dict[str, str]
+    mutates_workspace: bool = False
+
+    def as_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class ValidationFeedback:
     passed: bool
     reason: str
@@ -102,6 +115,7 @@ class DriverContext:
     task_playbook: str
     validation_playbook: str
     contract: TaskContract
+    available_tools: tuple[ToolDefinition, ...]
     events: tuple[LoopEvent, ...]
     last_validation: ValidationFeedback | None
     # Остаток общего времени позволяет сетевому драйверу завершить запрос до

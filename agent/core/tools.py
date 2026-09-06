@@ -24,16 +24,103 @@ from agent.validators import (
     protected_path,
 )
 
-from .models import AgentAction, ToolResult
+from .contracts import ContractError, map_instruction_path
+from .models import AgentAction, ToolDefinition, ToolResult
+from .workspace import (
+    apply_workspace_patch,
+    list_workspace_files,
+    read_workspace_bytes,
+    read_workspace_text,
+    resolve_workspace_path,
+    run_workspace_command,
+    search_workspace_text,
+)
 
 
 MAX_EXACT_TEXT_CHARS = 64_000
 RESERVED_ACTIONS = frozenset({"finish", "abort"})
+READ_ACTIONS = frozenset({"list_files", "read_file", "read_bytes", "search_text"})
+WRITE_ACTIONS = frozenset({"apply_patch", "run_command"})
 MODE_ACTIONS = {
-    "audit": frozenset({"security_scan"}),
-    "fix": frozenset({"security_scan", "sql_parameterize"}),
-    "forensics": frozenset({"forensics_analyze"}),
-    "general": frozenset({"write_exact_text"}),
+    "audit": READ_ACTIONS | {"security_scan"},
+    "fix": READ_ACTIONS | WRITE_ACTIONS | {"security_scan", "sql_parameterize"},
+    "forensics": READ_ACTIONS | {"forensics_analyze"},
+    "general": READ_ACTIONS | WRITE_ACTIONS | {"write_exact_text"},
+}
+TOOL_ORDER = (
+    "list_files",
+    "read_file",
+    "read_bytes",
+    "search_text",
+    "security_scan",
+    "sql_parameterize",
+    "forensics_analyze",
+    "write_exact_text",
+    "apply_patch",
+    "run_command",
+)
+TOOL_DEFINITIONS = {
+    "list_files": ToolDefinition(
+        "list_files",
+        "List bounded regular files under a workspace path.",
+        {"path": "string=.", "max_depth": "integer=6", "max_entries": "integer=200"},
+    ),
+    "read_file": ToolDefinition(
+        "read_file",
+        "Read a bounded UTF-8 line range from one regular file.",
+        {"path": "string", "start_line": "integer=1", "max_lines": "integer=200"},
+    ),
+    "read_bytes": ToolDefinition(
+        "read_bytes",
+        "Read a bounded byte range as hex and printable ASCII.",
+        {"path": "string", "offset": "integer=0", "length": "integer=256"},
+    ),
+    "search_text": ToolDefinition(
+        "search_text",
+        "Literal bounded text search over workspace files.",
+        {
+            "query": "string",
+            "path": "string=.",
+            "glob": "string=*",
+            "case_sensitive": "boolean=false",
+        },
+    ),
+    "security_scan": ToolDefinition(
+        "security_scan",
+        "Run the deterministic Python SQL-injection scanner.",
+        {"target": "string=.", "write_report": "boolean=false", "output": "string"},
+        True,
+    ),
+    "sql_parameterize": ToolDefinition(
+        "sql_parameterize",
+        "Apply supported asyncpg SQL value parameterization.",
+        {"target": "string=."},
+        True,
+    ),
+    "forensics_analyze": ToolDefinition(
+        "forensics_analyze",
+        "Correlate the supported incident evidence profile.",
+        {"target": "string=.", "output": "string=incident_report.txt"},
+        True,
+    ),
+    "write_exact_text": ToolDefinition(
+        "write_exact_text",
+        "Write an exact bounded text artifact requested by the instruction.",
+        {"path": "string", "content": "string"},
+        True,
+    ),
+    "apply_patch": ToolDefinition(
+        "apply_patch",
+        "Apply a bounded unified diff to existing non-protected UTF-8 files.",
+        {"patch": "string"},
+        True,
+    ),
+    "run_command": ToolDefinition(
+        "run_command",
+        "Run an allowlisted test/check command without shell interpretation.",
+        {"argv": "string[]", "cwd": "string=.", "timeout_seconds": "integer=60"},
+        True,
+    ),
 }
 
 
@@ -56,10 +143,16 @@ class SecurityToolRegistry:
         if not self.workdir.is_dir():
             raise ToolPolicyError(f"workdir is not a directory: {self.workdir}")
         self._handlers: dict[str, Callable[[dict[str, Any]], ToolResult]] = {
+            "list_files": self._list_files,
+            "read_file": self._read_file,
+            "read_bytes": self._read_bytes,
+            "search_text": self._search_text,
             "security_scan": self._security_scan,
             "sql_parameterize": self._sql_parameterize,
             "forensics_analyze": self._forensics_analyze,
             "write_exact_text": self._write_exact_text,
+            "apply_patch": self._apply_patch,
+            "run_command": self._run_command,
         }
 
     def _path(self, raw_value: object, *, default: Path | None = None) -> Path:
@@ -68,14 +161,20 @@ class SecurityToolRegistry:
                 raise ToolPolicyError("required path is missing")
             candidate = default
         elif isinstance(raw_value, str) and raw_value:
-            requested = Path(raw_value.replace("\\", "/"))
-            candidate = requested if requested.is_absolute() else self.workdir / requested
+            try:
+                candidate = map_instruction_path(raw_value, self.workdir)
+            except ContractError as error:
+                raise ToolPolicyError(str(error)) from error
         else:
             raise ToolPolicyError("path must be a non-empty string")
         resolved = canonical_path(candidate)
         if not path_is_within(resolved, self.workdir):
             raise ToolPolicyError(f"path is outside workdir: {candidate}")
         return resolved
+
+    def catalog(self, decision: StrategyDecision) -> tuple[ToolDefinition, ...]:
+        allowed = MODE_ACTIONS.get(decision.mode, frozenset())
+        return tuple(TOOL_DEFINITIONS[name] for name in TOOL_ORDER if name in allowed)
 
     def _analysis_target(self, raw_value: object) -> Path:
         target = self._path(raw_value, default=self.workdir)
@@ -101,6 +200,65 @@ class SecurityToolRegistry:
         except (OSError, UnicodeError, ValueError, RuntimeError) as error:
             return ToolResult(False, f"{action.name} failed: {error}")
 
+    @staticmethod
+    def _only(arguments: dict[str, Any], allowed: set[str], action: str) -> None:
+        unknown = sorted(set(arguments) - allowed)
+        if unknown:
+            raise ToolPolicyError(f"unsupported {action} argument(s): {unknown}")
+
+    def _list_files(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(arguments, {"path", "max_depth", "max_entries"}, "list_files")
+        data = list_workspace_files(
+            self.workdir,
+            path=arguments.get("path", "."),
+            max_depth=arguments.get("max_depth", 6),
+            max_entries=arguments.get("max_entries", 200),
+        )
+        return ToolResult(True, f"listed {data['count']} workspace file(s)", data)
+
+    def _read_file(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(arguments, {"path", "start_line", "max_lines"}, "read_file")
+        if "path" not in arguments:
+            raise ToolPolicyError("read_file requires path")
+        data = read_workspace_text(
+            self.workdir,
+            path=arguments["path"],
+            start_line=arguments.get("start_line", 1),
+            max_lines=arguments.get("max_lines", 200),
+        )
+        return ToolResult(
+            True,
+            f"read lines {data['start_line']}..{data['end_line']} from {data['path']}",
+            data,
+        )
+
+    def _read_bytes(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(arguments, {"path", "offset", "length"}, "read_bytes")
+        if "path" not in arguments:
+            raise ToolPolicyError("read_bytes requires path")
+        data = read_workspace_bytes(
+            self.workdir,
+            path=arguments["path"],
+            offset=arguments.get("offset", 0),
+            length=arguments.get("length", 256),
+        )
+        return ToolResult(True, f"read {data['bytes_read']} byte(s) from {data['path']}", data)
+
+    def _search_text(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(
+            arguments, {"query", "path", "glob", "case_sensitive"}, "search_text"
+        )
+        if "query" not in arguments:
+            raise ToolPolicyError("search_text requires query")
+        data = search_workspace_text(
+            self.workdir,
+            query=arguments["query"],
+            path=arguments.get("path", "."),
+            glob=arguments.get("glob", "*"),
+            case_sensitive=arguments.get("case_sensitive", False),
+        )
+        return ToolResult(True, f"text search found {data['match_count']} match(es)", data)
+
     def _security_scan(self, arguments: dict[str, Any]) -> ToolResult:
         allowed_keys = {"target", "write_report", "output"}
         unknown = sorted(set(arguments) - allowed_keys)
@@ -111,8 +269,9 @@ class SecurityToolRegistry:
         write_report = _expect_bool(arguments, "write_report", False)
         output_path: Path | None = None
         if write_report:
-            output_path = self._path(
-                arguments.get("output"), default=self.workdir / "security_report.json"
+            raw_output = arguments.get("output", "security_report.json")
+            output_path = resolve_workspace_path(
+                self.workdir, raw_output, must_exist=False, for_write=True
             )
             relative = output_path.relative_to(self.workdir).as_posix()
             if protected_path(relative) or dependency_path(relative):
@@ -150,8 +309,11 @@ class SecurityToolRegistry:
         if unknown:
             raise ToolPolicyError(f"unsupported forensics_analyze argument(s): {unknown}")
         target = self._analysis_target(arguments.get("target"))
-        output = self._path(
-            arguments.get("output"), default=self.workdir / "incident_report.txt"
+        output = resolve_workspace_path(
+            self.workdir,
+            arguments.get("output", "incident_report.txt"),
+            must_exist=False,
+            for_write=True,
         )
         relative = output.relative_to(self.workdir).as_posix()
         if protected_path(relative) or dependency_path(relative):
@@ -180,7 +342,9 @@ class SecurityToolRegistry:
             raise ToolPolicyError("content must be text")
         if len(content) > MAX_EXACT_TEXT_CHARS:
             raise ToolPolicyError(f"content exceeds {MAX_EXACT_TEXT_CHARS} characters")
-        output = self._path(arguments["path"])
+        output = resolve_workspace_path(
+            self.workdir, arguments["path"], must_exist=False, for_write=True
+        )
         relative = output.relative_to(self.workdir).as_posix()
         if protected_path(relative) or dependency_path(relative):
             raise ToolPolicyError(f"refusing protected output path: {relative}")
@@ -191,3 +355,32 @@ class SecurityToolRegistry:
             f"wrote exact UTF-8 content to {relative}",
             {"path": str(output), "characters": len(content)},
         )
+
+    def _apply_patch(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(arguments, {"patch"}, "apply_patch")
+        if "patch" not in arguments:
+            raise ToolPolicyError("apply_patch requires patch")
+        data = apply_workspace_patch(self.workdir, patch=arguments["patch"])
+        return ToolResult(
+            True,
+            f"applied {data['hunk_count']} hunk(s) to {data['file_count']} file(s)",
+            data,
+        )
+
+    def _run_command(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(arguments, {"argv", "cwd", "timeout_seconds"}, "run_command")
+        if "argv" not in arguments:
+            raise ToolPolicyError("run_command requires argv")
+        data = run_workspace_command(
+            self.workdir,
+            argv=arguments["argv"],
+            cwd=arguments.get("cwd", "."),
+            timeout_seconds=arguments.get("timeout_seconds", 60),
+        )
+        ok = data["exit_code"] == 0 and not data["timed_out"]
+        summary = (
+            f"command {data['profile']} completed with exit code {data['exit_code']}"
+            if not data["timed_out"]
+            else f"command {data['profile']} timed out"
+        )
+        return ToolResult(ok, summary, data)

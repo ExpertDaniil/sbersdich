@@ -13,7 +13,9 @@
 - **C-08** — общий validation engine для артефактов, изменений, синтаксиса и
   тестовых команд;
 - **C-09** — основной автономный цикл: structured actions, режимные инструменты,
-  бюджеты, retry и обязательная финальная валидация.
+  бюджеты, retry и обязательная финальная валидация;
+- **C-10** — ограниченные инструменты чтения, поиска, unified patch и запуска
+  проверочных процессов для будущего LLM-драйвера.
 
 Для блока ядра также добавлены результаты **A-01…A-03**: разбор официального
 интерфейса, общие контракты и безопасное подключение к локальной модели через
@@ -62,10 +64,12 @@ chmod +x scripts/check_all.sh
 - 12 unit/CLI/behavior-тестов C-06 для классификатора, аудитора и исправителя;
 - 12 вариативных тестов C-07 для inventory, корреляции, XFF, evidence graph и
   строгого отчёта;
-- 17 policy/CLI-тестов C-08 для snapshot, артефактов, syntax, timeout и
+- 18 policy/CLI-тестов C-08 для snapshot, артефактов, syntax, timeout и
   разрешённых изменений;
 - 19 сквозных тестов C-09 для action loop, audit/fix/forensics, повторной
-  валидации, ограничений путей и budget exhaustion.
+  валидации, ограничений путей и budget exhaustion;
+- 32 security/integration-теста C-10 для чтения, поиска, patch, process
+  allowlist, timeout, Windows `/app` и защиты секретов.
 
 ## Проверка C-03 отдельно
 
@@ -164,6 +168,22 @@ python3 -m agent.core.loop \
 
 Подробности: [`docs/C09_REPORT.md`](docs/C09_REPORT.md).
 
+## Проверка C-10 отдельно
+
+Новые инструменты входят в общий пакет агента:
+
+```bash
+./agent/verify.sh
+```
+
+На публичных environment-копиях:
+
+```bash
+./scripts/run_c10_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
+```
+
+Подробности: [`docs/C10_REPORT.md`](docs/C10_REPORT.md).
+
 ## Полная ручная проверка в Docker
 
 Нужны Docker, Git, Bash, `patch` и локальная копия публичного репозитория организаторов.
@@ -236,7 +256,14 @@ forensics-задачи:
 ./scripts/run_c09_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
 ```
 
+C-10 отдельно проверяет bounded read/search, перенос unified diff на обе
+публичные fix-задачи и allowlisted Python syntax check:
+
+```bash
+./scripts/run_c10_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
+```
+
 ## Следующий этап
 
-Следующая задача — **C-10: безопасные общие filesystem/process-инструменты**.
+Следующая задача — **C-11: адаптер локальной OpenAI-compatible LLM**.
 Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
