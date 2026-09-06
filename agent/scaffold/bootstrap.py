@@ -8,6 +8,7 @@ from pathlib import Path
 from agent.core.llm import ModelUsage
 
 from .contracts import KernelLimits, ScaffoldRunResult
+from .distiller import RepositoryDistillerProvider
 from .extensions import ScaffoldExtension
 from .kernel import AgentKernel
 from .planner import HybridPlanner
@@ -36,6 +37,9 @@ def build_default_application(
     extensions: tuple[ScaffoldExtension, ...] = (),
 ) -> ScaffoldApplication:
     providers = [
+        # Structural repository understanding goes first so the planner can localize
+        # cheaply before falling back to broad file reads or command execution.
+        RepositoryDistillerProvider(workdir),
         LegacySecurityProvider(workdir),
         WorkspaceFileProvider(workdir),
     ]

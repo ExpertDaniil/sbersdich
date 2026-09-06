@@ -120,6 +120,10 @@ class LazyLocalModelPlanner:
             "fields and never invent tool output. Prefer the lowest capability level that can "
             "discriminate the current hypothesis. If task_state.recovery_required is true, materially "
             "change the hypothesis, tool family, or capability level instead of repeating the same probe. "
+            "For repository-level code tasks, localize before reading broadly: use rank_relevant_files "
+            "when the location is unknown, repo_tree for structure, repo_skeleton for compact file-level "
+            "context, and inspect_symbol for focused code plus references. Prefer these distilled views "
+            "over repeatedly reading whole files when they can answer the same question. "
             "Use finish only when the result is ready for deterministic verification.\n\n"
             + context.task_playbook[:MAX_GUIDANCE_CHARS]
             + "\n\nValidation guidance:\n"

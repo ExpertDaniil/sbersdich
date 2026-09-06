@@ -24,6 +24,7 @@ run_python -m py_compile \
     agent/scaffold/cli.py \
     agent/scaffold/contracts.py \
     agent/scaffold/diagnostics.py \
+    agent/scaffold/distiller.py \
     agent/scaffold/extensions.py \
     agent/scaffold/interfaces.py \
     agent/scaffold/kernel.py \
@@ -42,6 +43,7 @@ run_python -m py_compile \
     agent/tests/test_forensics_tools.py \
     agent/tests/test_llm.py \
     agent/tests/test_scaffold_diagnostics.py \
+    agent/tests/test_scaffold_distiller.py \
     agent/tests/test_scaffold_kernel.py \
     agent/tests/test_scaffold_packaging.py \
     agent/tests/test_scaffold_registry.py \
@@ -55,4 +57,4 @@ run_python -m py_compile \
 run_python -m unittest discover -s agent/tests -p 'test_*.py' -v
 run_python scripts/scaffold_smoke.py
 
-printf '%s\n' "C-06/C-11 + experimental scaffold verification passed"
+printf '%s\n' "C-06/C-11 + repository distiller + experimental scaffold verification passed"
