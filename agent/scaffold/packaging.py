@@ -69,10 +69,17 @@ def _zip_info(name: str, executable: bool) -> zipfile.ZipInfo:
 
 
 def build_submission(repo_root: Path, output: Path) -> BuildResult:
+    """Build exactly the archive that the competition site should receive.
+
+    The root ``run.sh`` is the production contract.  ``run_scaffold.sh`` is a
+    developer convenience entrypoint and must never silently replace the file
+    Harbor will execute.
+    """
+
     repo_root = repo_root.resolve()
-    launcher = repo_root / "run_scaffold.sh"
+    launcher = repo_root / "run.sh"
     if not launcher.is_file():
-        raise ValueError("run_scaffold.sh is missing")
+        raise ValueError("competition run.sh is missing")
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -86,6 +93,8 @@ def build_submission(repo_root: Path, output: Path) -> BuildResult:
     names = [name for name, _, _ in entries]
     if len(names) != len(set(names)):
         raise ValueError("duplicate submission member")
+    if "agent.py" in names or "agent/agent.py" in names:
+        raise ValueError("competition-managed agent.py must not be shipped")
 
     with zipfile.ZipFile(output, "w") as archive:
         for name, content, executable in entries:
