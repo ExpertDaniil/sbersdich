@@ -109,11 +109,13 @@ class DeterministicDriver:
             return AgentAction("finish", rationale="incident report is ready for validation")
 
         if mode == "general" and context.contract.exact_writes:
-            completed = {
-                str(event.tool_result.data.get("path"))
-                for event in tool_events
-                if event.action and event.action.name == "write_exact_text"
-            }
+            completed: set[str] = set()
+
+            for event in tool_events:
+                if event.action and event.action.name == "write_exact_text":
+                    assert event.tool_result is not None
+                    completed.add(str(event.tool_result.data.get("path")))
+
             for path, value in context.contract.exact_writes:
                 if str(path) not in completed:
                     return AgentAction(
@@ -121,7 +123,11 @@ class DeterministicDriver:
                         {"path": str(path), "content": value},
                         "satisfy the exact-file instruction contract",
                     )
-            return AgentAction("finish", rationale="exact-file artifacts are ready")
+
+            return AgentAction(
+                "finish",
+                rationale="exact-file artifacts are ready",
+            )
 
         return AgentAction(
             "abort",
@@ -247,6 +253,10 @@ class AgentLoop:
                     contract=contract,
                     events=tuple(events),
                     last_validation=last_validation,
+                    remaining_seconds=max(
+                        0.0,
+                        self.limits.deadline_seconds - (self.clock() - started),
+                    ),
                 )
                 action = self.driver.next_action(context)
                 if not isinstance(action, AgentAction):

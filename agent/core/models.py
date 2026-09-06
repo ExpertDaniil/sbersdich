@@ -104,6 +104,9 @@ class DriverContext:
     contract: TaskContract
     events: tuple[LoopEvent, ...]
     last_validation: ValidationFeedback | None
+    # Остаток общего времени позволяет сетевому драйверу завершить запрос до
+    # того, как ядру понадобится резерв на сохранение и проверку результата.
+    remaining_seconds: float | None = None
 
 
 class ActionDriver(Protocol):
@@ -111,6 +114,7 @@ class ActionDriver(Protocol):
 
     def next_action(self, context: DriverContext) -> AgentAction:
         """Return exactly one structured action."""
+        ...
 
 
 @dataclass(frozen=True)
