@@ -1,269 +1,66 @@
 # Sber SDI Challenge — автономный ИБ-агент
 
-Командный репозиторий решения для универсального автономного агента по кибербезопасности, работающего в изолированном контуре с локальной LLM.
+Командный репозиторий решения для хакатона: автономный агент анализирует
+задание и файлы в изолированном окружении, обращается к локальной LLM,
+выполняет разрешённые действия и принимает результат только после проверки.
 
-Сейчас в репозитории находятся проверенные учебные решения:
+## Что уже есть
 
-- **C-03** — минимальное исправление SQL-инъекции в `POST /login`;
-- **C-04** — security/regression-проверка исправленного FastAPI-приложения;
-- **C-05** — независимый анализатор incident-логов с evidence trace;
-- **C-06** — переносимые audit/fix-стратегии, AST-аудитор и безопасный
-  параметризатор SQL;
-- **C-07** — универсальная forensics-стратегия, inventory и evidence graph;
-- **C-08** — общий validation engine для артефактов, изменений, синтаксиса и
-  тестовых команд;
-- **C-09** — основной автономный цикл: structured actions, режимные инструменты,
-  бюджеты, retry и обязательная финальная валидация;
-- **C-10** — ограниченные инструменты чтения, поиска, unified patch и запуска
-  проверочных процессов для будущего LLM-драйвера.
+- `run.sh` и `agent/local_agent.py` — точка входа и подключение локальной модели;
+- `agent/core/` — контракты, автономный цикл, бюджеты и безопасные инструменты;
+- `agent/playbooks/` — инструкции для audit, fix и forensics;
+- `agent/tools/` — анализ кода, SQL-fix и обработка incident-данных;
+- `agent/validators.py` — проверка артефактов, изменений, синтаксиса и тестов;
+- `security/tasks/` — локальные учебные ИБ-решения и regression-проверки;
+- `evaluation/` — тестовый контур и C-11 журнал причин провалов;
+- `scripts/` — повторяемые локальные и публичные проверки.
 
-Для блока ядра также добавлены результаты **A-01…A-03**: разбор официального
-интерфейса, общие контракты и безопасное подключение к локальной модели через
-корневой `run.sh`. Обе простые задачи A-04 также проходят без обращения к
-модели. Подробности: [`docs/A01_A03_REPORT.md`](docs/A01_A03_REPORT.md) и
-[`docs/A04_REPORT.md`](docs/A04_REPORT.md).
-Текущая сверка всего блока: [`docs/A_STATUS.md`](docs/A_STATUS.md).
-Протокол прогона официального набора: [`docs/A15_REPORT.md`](docs/A15_REPORT.md).
+Архитектура описана в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), отчёты
+по этапам находятся в `docs/` и `security/tasks/`.
 
-Публичный репозиторий организаторов не изменяется. Он используется только как источник учебных задач; Docker-проверка создаёт временную копию исходного commit.
+## Быстрая проверка
 
-## Структура
-
-```text
-agent/                    код, который позже войдёт в submission
-  core/                   цикл агента, бюджет и контекст
-  tools/                  файловые и процессные инструменты
-  playbooks/              audit, fix, forensics и CTF-стратегии
-security/tasks/           учебные ИБ-разборы C-03, C-04, C-05...
-evaluation/               тестовый стенд, дополнительные задачи и результаты
-docs/                     архитектура, допущения и дорожная карта
-scripts/                  единые команды проверки
-```
-
-Подробности: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
-
-## Быстрая проверка без Docker
-
-Требуются Bash и Python 3.12+.
-
-Из корня репозитория:
+Нужны Bash и Python 3.12+. Из корня репозитория:
 
 ```bash
-chmod +x scripts/check_all.sh
 ./scripts/check_all.sh
+./evaluation/verify.sh
 ```
 
-Команда выполняет:
+В Windows PowerShell те же проверки можно запустить через Git Bash:
 
-- 5 unit/security-тестов C-03;
-- 4 теста проверяющего контура C-04;
-- 11 HTTP-проверок на безопасном fake API;
-- отрицательный тест на намеренно уязвимом login;
-- проверку обработки провала project pytest;
-- 7 unit/CLI/format-тестов C-05 с изменяемыми incident-данными;
-- 12 unit/CLI/behavior-тестов C-06 для классификатора, аудитора и исправителя;
-- 12 вариативных тестов C-07 для inventory, корреляции, XFF, evidence graph и
-  строгого отчёта;
-- 18 policy/CLI-тестов C-08 для snapshot, артефактов, syntax, timeout и
-  разрешённых изменений;
-- 19 сквозных тестов C-09 для action loop, audit/fix/forensics, повторной
-  валидации, ограничений путей и budget exhaustion;
-- 32 security/integration-теста C-10 для чтения, поиска, patch, process
-  allowlist, timeout, Windows `/app` и защиты секретов.
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" "./scripts/check_all.sh"
+& "C:\Program Files\Git\bin\bash.exe" "./evaluation/verify.sh"
+```
 
-## Проверка C-03 отдельно
+## Запуск агента
+
+Runtime передаёт `LOCAL_AGENT_MODEL`, `OPENAI_BASE_URL` и `OPENAI_API_KEY`.
+После их настройки агент запускается одной инструкцией:
 
 ```bash
-cd security/tasks/c03_fix_sqli_login
-chmod +x verify.sh
-./verify.sh
+./run.sh 'Проверь проект в /app и выполни требования задания.'
 ```
 
-Готовый безопасный файл: `security/tasks/c03_fix_sqli_login/routers/auth.py`.
+Публичные задачи организаторов используются только для локальной проверки.
+Скрипты `run_c*_public.sh` работают с временными копиями и не изменяют
+исходный репозиторий.
 
-Отчёт: [`security/tasks/c03_fix_sqli_login/C03_REPORT.md`](security/tasks/c03_fix_sqli_login/C03_REPORT.md).
-
-## Проверка C-04 отдельно
+## Разбор неудачного прогона (C-11)
 
 ```bash
-cd security/tasks/c04_regression_verification
-chmod +x verify_package.sh
-./verify_package.sh
+python3 -m evaluation.failure_analysis \
+  evaluation/results/c09_public/traces.json \
+  --output evaluation/results/failure_journal.json \
+  --strict
 ```
 
-Отчёт: [`security/tasks/c04_regression_verification/C04_REPORT.md`](security/tasks/c04_regression_verification/C04_REPORT.md).
+Журнал разделяет причины на запуск, формат, гипотезу, исполнение, timeout,
+бюджет и регрессию. Для каждого провала сохраняются evidence из исходного
+лога, причина, следующий владелец и действие. Подробности:
+[`docs/C11_REPORT.md`](docs/C11_REPORT.md).
 
-## Проверка C-05 отдельно
-
-```bash
-cd security/tasks/c05_incident_forensics
-chmod +x verify.sh
-./verify.sh
-```
-
-Анализатор: `security/tasks/c05_incident_forensics/analyze_incident.py`.
-
-Отчёт: [`security/tasks/c05_incident_forensics/C05_REPORT.md`](security/tasks/c05_incident_forensics/C05_REPORT.md).
-
-## Проверка C-06 отдельно
-
-```bash
-chmod +x agent/verify.sh
-./agent/verify.sh
-```
-
-Инструменты C-06 работают на стандартной библиотеке Python и не содержат
-ответов публичных задач. Отчёт: [`docs/C06_REPORT.md`](docs/C06_REPORT.md).
-
-## Проверка C-07 отдельно
-
-Тесты C-07 входят в общий пакет агента:
-
-```bash
-./agent/verify.sh
-```
-
-Пример запуска forensics-профиля:
-
-```bash
-python3 -m agent.tools.forensics analyze /app \
-  --output /app/incident_report.txt \
-  --trace /tmp/evidence_graph.json
-```
-
-Отчёт этапа: [`docs/C07_REPORT.md`](docs/C07_REPORT.md).
-
-## Проверка C-08 отдельно
-
-```bash
-./agent/verify.sh
-```
-
-Минимальный validation lifecycle:
-
-```bash
-python3 -m agent.validators snapshot /app --output /tmp/task-baseline.json
-python3 -m agent.validators validate /app \
-  --mode audit \
-  --baseline /tmp/task-baseline.json \
-  --artifact security-report=security_report.json
-```
-
-Подробности: [`docs/C08_REPORT.md`](docs/C08_REPORT.md).
-
-## Проверка C-09 отдельно
-
-```bash
-./agent/verify.sh
-```
-
-Пример полностью локального запуска без LLM:
-
-```bash
-mkdir -p /tmp/c09-app
-python3 -m agent.core.loop \
-  'Create a file at `/app/result.txt` whose content is exactly `done`.' \
-  --workdir /tmp/c09-app
-```
-
-Подробности: [`docs/C09_REPORT.md`](docs/C09_REPORT.md).
-
-## Проверка C-10 отдельно
-
-Новые инструменты входят в общий пакет агента:
-
-```bash
-./agent/verify.sh
-```
-
-На публичных environment-копиях:
-
-```bash
-./scripts/run_c10_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
-```
-
-Подробности: [`docs/C10_REPORT.md`](docs/C10_REPORT.md).
-
-## Полная ручная проверка в Docker
-
-Нужны Docker, Git, Bash, `patch` и локальная копия публичного репозитория организаторов.
-
-```bash
-git clone https://github.com/SecureIntelligent/UniversalAgenticCompetitionPublic.git
-./scripts/run_c03_c04_docker.sh /absolute/path/to/UniversalAgenticCompetitionPublic
-```
-
-Скрипт:
-
-1. проверяет, что передан Git-репозиторий;
-2. экспортирует его текущий commit во временный каталог;
-3. применяет исправление C-03 только к временной копии;
-4. собирает образ на основе `secureintelligent/acp`;
-5. запускает C-04 с новой PostgreSQL и новым Uvicorn-процессом;
-6. сохраняет журналы в `evaluation/results/c04_manual/`;
-7. удаляет временную копию.
-
-Исходный публичный репозиторий и его remote не меняются.
-
-Успешный результат заканчивается строкой:
-
-```text
-C-04 PASSED: project tests and HTTP checks succeeded
-```
-
-Публичную C-05 можно проверить отдельно, также без изменения исходного
-репозитория организаторов:
-
-```bash
-./scripts/run_c05_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
-```
-
-Отчёт и evidence trace сохранятся в `evaluation/results/c05_public/`.
-
-Audit/fix-инструменты C-06 можно прогнать на одноразовых копиях трёх публичных
-SQL-задач:
-
-```bash
-./scripts/run_c06_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
-```
-
-Скрипт проверяет отсутствие изменений в исходном публичном репозитории,
-находит уязвимость в audit-задаче и исправляет обе fix-задачи только во
-временном каталоге. Результаты сохраняются в
-`evaluation/results/c06_public/`.
-
-Forensics-инструмент C-07 проверяется без чтения публичных expected/solution:
-
-```bash
-./scripts/run_c07_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
-```
-
-Исходные артефакты копируются во временный каталог. Строгий отчёт, evidence
-graph и техническая сводка сохраняются в `evaluation/results/c07_public/`.
-
-Общие политики C-08 проверяются на одноразовых копиях audit, двух fix и
-forensics-задачи:
-
-```bash
-./scripts/run_c08_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
-```
-
-Полный C-09 loop можно прогнать по всем шести публичным instruction. Runner не
-читает `solution`/`expected`, работает только на временных копиях и проверяет,
-что публичный репозиторий не изменился:
-
-```bash
-./scripts/run_c09_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
-```
-
-C-10 отдельно проверяет bounded read/search, перенос unified diff на обе
-публичные fix-задачи и allowlisted Python syntax check:
-
-```bash
-./scripts/run_c10_public.sh /absolute/path/to/UniversalAgenticCompetitionPublic
-```
-
-## Следующий этап
-
-Следующая задача — **C-11: адаптер локальной OpenAI-compatible LLM**.
-Статус и критерии находятся в [`docs/ROADMAP.md`](docs/ROADMAP.md).
+`evaluation/`, тестовые задачи и отчёты нужны в репозитории для разработки.
+В финальный архив до 10 МБ должны попасть только runtime-файлы, необходимые
+`run.sh`; состав архива проверяется отдельно перед отправкой.
