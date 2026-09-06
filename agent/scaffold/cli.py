@@ -19,7 +19,13 @@ from .extensions import gdb_extension
 
 
 def _default_workdir() -> Path:
-    return Path(os.environ.get("LOCAL_AGENT_WORKDIR", os.getcwd())).resolve()
+    explicit = os.environ.get("LOCAL_AGENT_WORKDIR")
+    if explicit:
+        return Path(explicit).resolve()
+    competition_app = Path("/app")
+    if competition_app.is_dir():
+        return competition_app.resolve()
+    return Path.cwd().resolve()
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -1,0 +1,88 @@
+name: sber-competition-contract
+
+on:
+  push:
+    branches: [test_govno]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-harbor-contract-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build exact upload artifact
+        run: |
+          python3 scripts/build_scaffold_submission.py --output /tmp/submission.zip
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('/tmp/submission.zip') as z:
+              names = set(z.namelist())
+          assert 'run.sh' in names
+          assert 'agent/scaffold/kernel.py' in names
+          assert 'agent.py' not in names, 'competition injects the common wrapper itself'
+          print('submission contract ok:', len(names), 'members')
+          PY
+
+      - name: Fetch current public competition fixtures
+        run: |
+          git clone --depth=1 https://github.com/SecureIntelligent/UniversalAgenticCompetitionPublic.git /tmp/public
+
+      - name: Stage artifact exactly like installed submission
+        run: |
+          rm -rf /tmp/local-agent
+          mkdir -p /tmp/local-agent
+          unzip -q /tmp/submission.zip -d /tmp/local-agent
+          chmod +x /tmp/local-agent/run.sh
+          sudo rm -rf /app
+          sudo mkdir -p /app
+          sudo chown -R "$USER":"$USER" /app
+
+      - name: Exact-file task from Harbor working directory
+        run: |
+          cd /tmp/local-agent
+          ./run.sh "$(cat /tmp/public/local_task/hello-file/instruction.md)" >/tmp/hello-agent.json
+          test "$(cat /app/hello.txt)" = 'Hello'
+          grep -q '"status": "succeeded"' /tmp/hello-agent.json
+          grep -q '"requests": 0' /tmp/hello-agent.json
+
+      - name: Public audit task through upload entrypoint
+        run: |
+          rm -rf /app/*
+          cp -a /tmp/public/local_task/find-sqli-login/environment/app/. /app/
+          cd /tmp/local-agent
+          ./run.sh "$(cat /tmp/public/local_task/find-sqli-login/instruction.md)" >/tmp/audit-agent.json
+          test -s /app/security_report.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open('/app/security_report.json', encoding='utf-8'))
+          assert report
+          print('audit report generated')
+          PY
+
+      - name: Public fix task through upload entrypoint
+        run: |
+          rm -rf /app/*
+          cp -a /tmp/public/local_task/fix-sqli-login/environment/app/. /app/
+          cd /tmp/local-agent
+          ./run.sh "$(cat /tmp/public/local_task/fix-sqli-login/instruction.md)" >/tmp/fix-agent.json
+          grep -q '"status": "succeeded"' /tmp/fix-agent.json
+          python3 -m py_compile /app/routers/auth.py
+
+      - name: Prove wrapper cwd is not mistaken for task cwd
+        run: |
+          test ! -e /tmp/local-agent/hello.txt
+          test ! -e /tmp/local-agent/security_report.json
+          echo 'all task artifacts stayed under /app'
+
+      - name: Cleanup
+        if: always()
+        run: sudo rm -rf /app /tmp/local-agent /tmp/public /tmp/submission.zip
