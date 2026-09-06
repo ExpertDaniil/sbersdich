@@ -16,6 +16,7 @@ run_python -m py_compile \
     agent/core/llm.py \
     agent/core/loop.py \
     agent/core/models.py \
+    agent/core/reasoning.py \
     agent/core/playbooks.py \
     agent/core/tools.py \
     agent/core/workspace.py \
@@ -26,8 +27,9 @@ run_python -m py_compile \
     agent/tests/test_audit_fix_tools.py \
     agent/tests/test_forensics_tools.py \
     agent/tests/test_llm.py \
+    agent/tests/test_reasoning.py \
     agent/tests/test_validators.py \
     agent/tests/test_workspace_tools.py
 run_python -m unittest discover -s agent/tests -p 'test_*.py' -v
 
-printf '%s\n' "C-06/C-11 agent component verification passed"
+printf '%s\n' "C-06/C-12 agent component verification passed"
