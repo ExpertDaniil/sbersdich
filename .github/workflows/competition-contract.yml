@@ -46,17 +46,20 @@ jobs:
           sudo mkdir -p /app
           sudo chown -R "$USER":"$USER" /app
 
-      - name: Exact-file task from Harbor working directory
+      - name: Public exact-file tasks through Harbor working directory
         run: |
           cd /tmp/local-agent
+          rm -rf /app/*
           ./run.sh "$(cat /tmp/public/local_task/hello-file/instruction.md)" | tee /tmp/hello-agent.json
-          echo '--- /app after run ---'
-          find /app -maxdepth 2 -type f -print -exec sh -c 'printf "CONTENT: "; cat "$1"; printf "\n"' _ {} \;
-          echo '--- staged agent root after run ---'
-          find /tmp/local-agent -maxdepth 2 -type f -print | sort | head -100
           test "$(cat /app/hello.txt)" = 'Hello'
           grep -q '"status": "succeeded"' /tmp/hello-agent.json
           grep -q '"requests": 0' /tmp/hello-agent.json
+
+          rm -rf /app/*
+          ./run.sh "$(cat /tmp/public/local_task/bye-file/instruction.md)" | tee /tmp/bye-agent.json
+          test "$(cat /app/bye.txt)" = 'Bye'
+          grep -q '"status": "succeeded"' /tmp/bye-agent.json
+          grep -q '"requests": 0' /tmp/bye-agent.json
 
       - name: Public audit task through upload entrypoint
         run: |
@@ -65,6 +68,7 @@ jobs:
           cd /tmp/local-agent
           ./run.sh "$(cat /tmp/public/local_task/find-sqli-login/instruction.md)" | tee /tmp/audit-agent.json
           test -s /app/security_report.json
+          grep -q '"status": "succeeded"' /tmp/audit-agent.json
           python3 - <<'PY'
           import json
           report = json.load(open('/app/security_report.json', encoding='utf-8'))
@@ -72,19 +76,48 @@ jobs:
           print('audit report generated')
           PY
 
-      - name: Public fix task through upload entrypoint
+      - name: Public fix-login task through upload entrypoint
         run: |
           rm -rf /app/*
           cp -a /tmp/public/local_task/fix-sqli-login/environment/app/. /app/
           cd /tmp/local-agent
-          ./run.sh "$(cat /tmp/public/local_task/fix-sqli-login/instruction.md)" | tee /tmp/fix-agent.json
-          grep -q '"status": "succeeded"' /tmp/fix-agent.json
+          ./run.sh "$(cat /tmp/public/local_task/fix-sqli-login/instruction.md)" | tee /tmp/fix-login-agent.json
+          grep -q '"status": "succeeded"' /tmp/fix-login-agent.json
           python3 -m py_compile /app/routers/auth.py
+
+      - name: Public fix-search task through upload entrypoint
+        run: |
+          rm -rf /app/*
+          cp -a /tmp/public/local_task/fix-sqli-search/environment/app/. /app/
+          cd /tmp/local-agent
+          ./run.sh "$(cat /tmp/public/local_task/fix-sqli-search/instruction.md)" | tee /tmp/fix-search-agent.json
+          grep -q '"status": "succeeded"' /tmp/fix-search-agent.json
+          python3 -m py_compile /app/routers/items.py
+
+      - name: Public forensics task through upload entrypoint
+        run: |
+          rm -rf /app/*
+          mkdir -p /app/incident
+          cp /tmp/public/local_task/incident-log-forensics/environment/collector_note.txt \
+             /tmp/public/local_task/incident-log-forensics/environment/proxy_access.log \
+             /tmp/public/local_task/incident-log-forensics/environment/app.jsonl \
+             /tmp/public/local_task/incident-log-forensics/environment/app_audit_recovered.jsonl \
+             /tmp/public/local_task/incident-log-forensics/environment/auth.log \
+             /tmp/public/local_task/incident-log-forensics/environment/edge_decisions.log \
+             /tmp/public/local_task/incident-log-forensics/environment/edge_decisions_fragment.log \
+             /tmp/public/local_task/incident-log-forensics/environment/dns_ptr_hints.txt \
+             /app/incident/
+          cd /tmp/local-agent
+          ./run.sh "$(cat /tmp/public/local_task/incident-log-forensics/instruction.md)" | tee /tmp/forensics-agent.json
+          grep -q '"status": "succeeded"' /tmp/forensics-agent.json
+          test -s /app/incident_report.txt
 
       - name: Prove wrapper cwd is not mistaken for task cwd
         run: |
           test ! -e /tmp/local-agent/hello.txt
+          test ! -e /tmp/local-agent/bye.txt
           test ! -e /tmp/local-agent/security_report.json
+          test ! -e /tmp/local-agent/incident_report.txt
           echo 'all task artifacts stayed under /app'
 
       - name: Cleanup
