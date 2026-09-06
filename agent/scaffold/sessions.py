@@ -204,6 +204,12 @@ class InteractiveSessionManager:
                     pass
         if self._reader is not None:
             self._reader.join(timeout=1)
+        for stream in (process.stdin, process.stdout):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
         return self.snapshot()
 
 
