@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 from .config import ModelConfig
 from .models import AgentAction, DriverContext
-from .tools import MODE_ACTIONS, RESERVED_ACTIONS
+from .tools import RESERVED_ACTIONS
 
 
 MAX_RESPONSE_BYTES = 256_000
@@ -246,12 +246,18 @@ class LocalModelActionDriver:
         return compact
 
     def next_action(self, context: DriverContext) -> AgentAction:
-        allowed = sorted(MODE_ACTIONS.get(context.decision.mode, frozenset()))
-        allowed.extend(sorted(RESERVED_ACTIONS))
+        # The registry is the single policy source.  Besides names, the model
+        # receives the bounded argument schemas introduced by C-10, so it can
+        # call generic workspace tools without inventing their parameters.
+        available_tools = [tool.as_payload() for tool in context.available_tools]
+        allowed = sorted(
+            {tool.name for tool in context.available_tools} | RESERVED_ACTIONS
+        )
         state = {
             "instruction": _bounded_text(context.instruction, MAX_INSTRUCTION_CHARS),
             "mode": context.decision.mode,
             "allowed_actions": allowed,
+            "available_tools": available_tools,
             "artifacts": [str(rule.path) for rule in context.contract.artifacts],
             "recent_events": self._event_payload(context),
             "last_validation": (

@@ -21,6 +21,7 @@ from agent.core.llm import (  # noqa: E402
 )
 from agent.core.models import DriverContext  # noqa: E402
 from agent.core.playbooks import load_playbook, load_validation_playbook  # noqa: E402
+from agent.core.tools import SecurityToolRegistry  # noqa: E402
 from agent.local_agent import build_parser  # noqa: E402
 from agent.strategies import classify_instruction  # noqa: E402
 
@@ -149,6 +150,7 @@ class LocalModelActionDriverTests(unittest.TestCase):
                 task_playbook=load_playbook(decision.playbook),
                 validation_playbook=load_validation_playbook(),
                 contract=build_task_contract(decision, instruction, root),
+                available_tools=SecurityToolRegistry(root).catalog(decision),
                 events=(),
                 last_validation=None,
             )
@@ -161,6 +163,11 @@ class LocalModelActionDriverTests(unittest.TestCase):
         request = recorded["request"]
         self.assertEqual(request["temperature"], 0)
         self.assertLessEqual(len(request["messages"][1]["content"]), 20_000)
+        state = json.loads(request["messages"][1]["content"])
+        tools = {tool["name"]: tool for tool in state["available_tools"]}
+        self.assertIn("read_file", tools)
+        self.assertIn("apply_patch", tools)
+        self.assertEqual(tools["apply_patch"]["parameters"], {"patch": "string"})
 
     def test_model_cannot_select_action_outside_mode_policy(self):
         def transport(url, headers, body, timeout):
@@ -181,6 +188,7 @@ class LocalModelActionDriverTests(unittest.TestCase):
                 task_playbook=load_playbook(decision.playbook),
                 validation_playbook=load_validation_playbook(),
                 contract=build_task_contract(decision, instruction, root),
+                available_tools=SecurityToolRegistry(root).catalog(decision),
                 events=(),
                 last_validation=None,
             )
@@ -199,7 +207,11 @@ class LocalAgentEntrypointTests(unittest.TestCase):
 
     def test_known_exact_file_task_needs_no_model_settings(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
+            temporary = Path(tmp).resolve()
+            root = temporary / "workdir"
+            root.mkdir()
+            stdout_path = temporary / "agent-stdout.json"
+            stderr_path = temporary / "agent-stderr.txt"
             env = os.environ.copy()
             for name in (
                 "LOCAL_AGENT_MODEL",
@@ -209,25 +221,30 @@ class LocalAgentEntrypointTests(unittest.TestCase):
             ):
                 env.pop(name, None)
             env["LOCAL_AGENT_WORKDIR"] = str(root)
-            process = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent.local_agent",
-                    "Create a file at `/app/hello.txt` whose entire content is "
-                    "exactly the single word `Hello`.",
-                ],
-                cwd=REPO_ROOT,
-                env=env,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=15,
-                check=False,
-            )
-            self.assertEqual(process.returncode, 0, process.stderr)
+            env["PYTHONUTF8"] = "1"
+            with stdout_path.open("wb") as stdout_handle, stderr_path.open(
+                "wb"
+            ) as stderr_handle:
+                process = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "agent.local_agent",
+                        "Create a file at `/app/hello.txt` whose entire content is "
+                        "exactly the single word `Hello`.",
+                    ],
+                    cwd=REPO_ROOT,
+                    env=env,
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    timeout=15,
+                    check=False,
+                )
+            stdout_text = stdout_path.read_text(encoding="utf-8")
+            stderr_text = stderr_path.read_text(encoding="utf-8")
+            self.assertEqual(process.returncode, 0, stderr_text)
             self.assertEqual((root / "hello.txt").read_bytes(), b"Hello")
-            payload = json.loads(process.stdout)
+            payload = json.loads(stdout_text)
             self.assertEqual(payload["status"], "succeeded")
             self.assertEqual(payload["metrics"]["model_usage"]["requests"], 0)
 
