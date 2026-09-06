@@ -1,0 +1,36 @@
+name: scaffold-checks
+
+on:
+  push:
+    branches: [test_govno]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify existing agent and experimental scaffold
+        run: ./agent/verify.sh
+      - name: Build deployable experimental ZIP
+        run: python3 scripts/build_scaffold_submission.py --output /tmp/test_govno_submission.zip
+      - name: Inspect archive contract
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          path = '/tmp/test_govno_submission.zip'
+          with zipfile.ZipFile(path) as z:
+              names = set(z.namelist())
+          assert 'run.sh' in names
+          assert 'agent/scaffold/kernel.py' in names
+          assert not any('/tests/' in name for name in names)
+          print(f'archive members={len(names)}')
+          PY
