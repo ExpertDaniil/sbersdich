@@ -49,7 +49,11 @@ jobs:
       - name: Exact-file task from Harbor working directory
         run: |
           cd /tmp/local-agent
-          ./run.sh "$(cat /tmp/public/local_task/hello-file/instruction.md)" >/tmp/hello-agent.json
+          ./run.sh "$(cat /tmp/public/local_task/hello-file/instruction.md)" | tee /tmp/hello-agent.json
+          echo '--- /app after run ---'
+          find /app -maxdepth 2 -type f -print -exec sh -c 'printf "CONTENT: "; cat "$1"; printf "\n"' _ {} \;
+          echo '--- staged agent root after run ---'
+          find /tmp/local-agent -maxdepth 2 -type f -print | sort | head -100
           test "$(cat /app/hello.txt)" = 'Hello'
           grep -q '"status": "succeeded"' /tmp/hello-agent.json
           grep -q '"requests": 0' /tmp/hello-agent.json
@@ -59,7 +63,7 @@ jobs:
           rm -rf /app/*
           cp -a /tmp/public/local_task/find-sqli-login/environment/app/. /app/
           cd /tmp/local-agent
-          ./run.sh "$(cat /tmp/public/local_task/find-sqli-login/instruction.md)" >/tmp/audit-agent.json
+          ./run.sh "$(cat /tmp/public/local_task/find-sqli-login/instruction.md)" | tee /tmp/audit-agent.json
           test -s /app/security_report.json
           python3 - <<'PY'
           import json
@@ -73,7 +77,7 @@ jobs:
           rm -rf /app/*
           cp -a /tmp/public/local_task/fix-sqli-login/environment/app/. /app/
           cd /tmp/local-agent
-          ./run.sh "$(cat /tmp/public/local_task/fix-sqli-login/instruction.md)" >/tmp/fix-agent.json
+          ./run.sh "$(cat /tmp/public/local_task/fix-sqli-login/instruction.md)" | tee /tmp/fix-agent.json
           grep -q '"status": "succeeded"' /tmp/fix-agent.json
           python3 -m py_compile /app/routers/auth.py
 
