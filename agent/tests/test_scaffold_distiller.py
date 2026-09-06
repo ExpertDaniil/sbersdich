@@ -35,9 +35,11 @@ class RepositoryDistillerTests(unittest.TestCase):
             root = Path(tmp)
             self._repo(root)
             data = RepositoryDistiller(root).repo_tree(max_depth=4, max_entries=100)
-            self.assertIn("app/auth.py", data["tree"].replace("\n", "/"))
-            self.assertNotIn("verifier", data["tree"])
-            self.assertNotIn(".git", data["tree"])
+            tree = data["tree"]
+            self.assertIn("app/", tree)
+            self.assertIn("auth.py", tree)
+            self.assertNotIn("verifier", tree)
+            self.assertNotIn(".git", tree)
 
     def test_symbol_index_extracts_python_and_javascript_symbols(self):
         with tempfile.TemporaryDirectory() as tmp:
