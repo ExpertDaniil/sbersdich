@@ -20,6 +20,7 @@ run_python -m py_compile \
     agent/core/tools.py \
     agent/core/workspace.py \
     agent/scaffold/__init__.py \
+    agent/scaffold/aci.py \
     agent/scaffold/bootstrap.py \
     agent/scaffold/cli.py \
     agent/scaffold/contracts.py \
@@ -32,6 +33,7 @@ run_python -m py_compile \
     agent/scaffold/planner.py \
     agent/scaffold/providers.py \
     agent/scaffold/registry.py \
+    agent/scaffold/security_relevance.py \
     agent/scaffold/sessions.py \
     agent/scaffold/state.py \
     agent/scaffold/verifier.py \
@@ -42,19 +44,22 @@ run_python -m py_compile \
     agent/tests/test_audit_fix_tools.py \
     agent/tests/test_forensics_tools.py \
     agent/tests/test_llm.py \
+    agent/tests/test_scaffold_aci.py \
     agent/tests/test_scaffold_diagnostics.py \
     agent/tests/test_scaffold_distiller.py \
     agent/tests/test_scaffold_kernel.py \
     agent/tests/test_scaffold_packaging.py \
     agent/tests/test_scaffold_registry.py \
+    agent/tests/test_scaffold_security_relevance.py \
     agent/tests/test_scaffold_sessions.py \
     agent/tests/test_scaffold_state.py \
     agent/tests/test_validators.py \
     agent/tests/test_workspace_tools.py \
+    scripts/benchmark_distiller.py \
     scripts/build_scaffold_submission.py \
     scripts/scaffold_doctor.py \
     scripts/scaffold_smoke.py
 run_python -m unittest discover -s agent/tests -p 'test_*.py' -v
 run_python scripts/scaffold_smoke.py
 
-printf '%s\n' "C-06/C-11 + repository distiller + experimental scaffold verification passed"
+printf '%s\n' "C-06/C-11 + Repository Distiller + Cyber ACI + experimental scaffold verification passed"
