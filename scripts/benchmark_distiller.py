@@ -24,6 +24,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Sequence
 
+# Executing ``python scripts/benchmark_distiller.py`` makes ``scripts`` sys.path[0].
+# Insert the repository root explicitly so the benchmark behaves the same locally and in CI.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from agent.scaffold.distiller import RepositoryDistiller
 
 
