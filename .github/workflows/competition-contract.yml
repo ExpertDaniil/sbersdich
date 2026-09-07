@@ -36,6 +36,12 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/SecureIntelligent/UniversalAgenticCompetitionPublic.git /tmp/public
 
+      - name: Benchmark Repository Distiller localization
+        run: |
+          python3 scripts/benchmark_distiller.py \
+            --public-root /tmp/public \
+            --json-output /tmp/distiller-benchmark.json
+
       - name: Stage artifact exactly like installed submission
         run: |
           rm -rf /tmp/local-agent
@@ -122,4 +128,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: sudo rm -rf /app /tmp/local-agent /tmp/public /tmp/submission.zip
+        run: sudo rm -rf /app /tmp/local-agent /tmp/public /tmp/submission.zip /tmp/distiller-benchmark.json
