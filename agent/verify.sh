@@ -22,6 +22,7 @@ run_python -m py_compile \
     agent/scaffold/__init__.py \
     agent/scaffold/aci.py \
     agent/scaffold/bootstrap.py \
+    agent/scaffold/candidate_arena.py \
     agent/scaffold/cli.py \
     agent/scaffold/contracts.py \
     agent/scaffold/diagnostics.py \
@@ -45,6 +46,7 @@ run_python -m py_compile \
     agent/tests/test_forensics_tools.py \
     agent/tests/test_llm.py \
     agent/tests/test_scaffold_aci.py \
+    agent/tests/test_scaffold_candidate_arena.py \
     agent/tests/test_scaffold_diagnostics.py \
     agent/tests/test_scaffold_distiller.py \
     agent/tests/test_scaffold_kernel.py \
@@ -62,4 +64,4 @@ run_python -m py_compile \
 run_python -m unittest discover -s agent/tests -p 'test_*.py' -v
 run_python scripts/scaffold_smoke.py
 
-printf '%s\n' "C-06/C-11 + Repository Distiller + Cyber ACI + experimental scaffold verification passed"
+printf '%s\n' "C-06/C-11 + Repository Distiller + Cyber ACI + Candidate Arena + experimental scaffold verification passed"
