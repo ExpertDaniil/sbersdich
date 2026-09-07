@@ -34,11 +34,13 @@ run_python -m py_compile \
     agent/scaffold/sessions.py \
     agent/scaffold/state.py \
     agent/scaffold/verifier.py \
+    agent/tools/ctf.py \
     agent/tools/forensics.py \
     agent/tools/security_scan.py \
     agent/tools/sql_parameterize.py \
     agent/tests/test_agent_loop.py \
     agent/tests/test_audit_fix_tools.py \
+    agent/tests/test_ctf.py \
     agent/tests/test_forensics_tools.py \
     agent/tests/test_llm.py \
     agent/tests/test_scaffold_diagnostics.py \
@@ -55,4 +57,4 @@ run_python -m py_compile \
 run_python -m unittest discover -s agent/tests -p 'test_*.py' -v
 run_python scripts/scaffold_smoke.py
 
-printf '%s\n' "C-06/C-11 + experimental scaffold verification passed"
+printf '%s\n' "C-06/C-13 + experimental scaffold verification passed"

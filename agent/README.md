@@ -3,13 +3,16 @@
 Здесь находится переносимая часть будущего автономного агента. На этапах
 C-06/C-07 реализованы:
 
-- детерминированная классификация задач `audit`, `fix`, `forensics` и `general`;
+- детерминированная классификация задач `audit`, `fix`, `forensics`, `ctf` и
+  `general`;
 - AST-аудитор Python-кода для поиска tainted SQL-конструкций;
 - ограниченный исправитель SQL-инъекций для поддерживаемых вызовов asyncpg;
 - playbook для режима аудита без изменения проекта;
 - playbook для минимального security-fix с обязательной проверкой;
 - forensics inventory, корреляционный профиль и evidence graph;
 - playbook для анализа инцидента без изменения доказательств;
+- CTF playbook и bounded-преобразования base32/base64/base64url, hex, URL,
+  ROT13, reverse, XOR, gzip и zlib;
 - общий validation engine с baseline, режимными политиками, проверкой
   артефактов, Python-синтаксиса и команд с timeout;
 - основной автономный цикл с action-протоколом, бюджетами, режимным allowlist,
@@ -33,6 +36,6 @@ python3 -m agent.validators snapshot /app --output /tmp/task-baseline.json
 python3 -m agent.core.loop 'Audit /app and write security_report.json' --workdir /app
 ```
 
-Адаптер локальной LLM и финальный `run.sh` будут добавлены на следующих этапах.
-Учебные решения из
-`security/tasks/` не копируются в submission.
+Локальная LLM подключается только после детерминированного роутинга; safety и
+validation-слои не зависят от ответа модели. Учебные решения из
+`security/tasks/` и проверочный `evaluation/` не копируются в submission.

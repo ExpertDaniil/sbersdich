@@ -8,6 +8,8 @@
   интерполяцию SQL-значений на позиционные параметры asyncpg;
 - `forensics.py` — инвентаризирует incident-артефакты, запускает поддерживаемый
   профиль корреляции, строит evidence graph и валидирует строгий отчёт.
+- `ctf.py` — выполняет явную ограниченную цепочку типовых offline-CTF
+  преобразований без запуска кода или сетевых обращений.
 
 Примеры:
 
@@ -18,6 +20,8 @@ python3 -m agent.tools.sql_parameterize ./project --apply
 python3 -m agent.tools.forensics inventory /app/incident
 python3 -m agent.tools.forensics analyze /app --output /app/incident_report.txt
 python3 -m agent.tools.forensics validate /app/incident_report.txt
+python3 -m agent.tools.ctf 'U0JFUntleGFtcGxlfQ==' \
+  --steps-json '[{"operation":"base64"}]'
 ```
 
 `--check` ничего не записывает и возвращает код `1`, если найдены автоматически
@@ -35,3 +39,8 @@ Forensics-анализатор автоматически принимает к�
 вызываются только через режимный registry. Они ограничивают пути, размеры
 файлов/ответов, число результатов и timeout; process runner не использует shell
 и удаляет LLM credentials из окружения дочерней команды.
+
+`ctf_transform` принимает не более восьми операций и ограничивает промежуточный
+результат 4096 байт. Gzip/zlib распаковываются с лимитом, XOR требует явный
+непустой ключ. CTF-режим может читать workspace и записать заявленный ответ, но
+не получает `apply_patch`, process runner или специализированные fix-инструменты.

@@ -11,8 +11,9 @@
 - `tools/sql_parameterize.py` — реализованный ограниченный asyncpg-fixer;
 - `tools/forensics.py` — реализованные inventory, incident-profile и evidence
   graph;
-- `playbooks/audit.md`, `playbooks/fix.md`, `playbooks/forensics.md` —
-  реализованные стратегии;
+- `tools/ctf.py` — bounded offline decode/decompress/XOR-преобразования;
+- `playbooks/audit.md`, `playbooks/fix.md`, `playbooks/forensics.md`,
+  `playbooks/ctf.md` — реализованные стратегии;
 - `validators.py` — реализованные baseline snapshot, режимные политики,
   форматы артефактов, syntax и команды с timeout;
 - `core/loop.py` — реализованный цикл «инструкция → действие → наблюдение →
@@ -44,7 +45,9 @@
 
 - `results/` — локальные результаты прогонов, не коммитятся;
 - `extra_tasks/` — независимые вариации задач без доступного агенту эталона;
-- позднее здесь появятся `run_suite.py`, `summarize.py` и журнал причин провалов.
+- `failure_analysis.py` — журнал причин провалов;
+- `portability.py` — C-12 adversarial/portability suite;
+- `ctf_suite.py` — C-13 с тремя генерируемыми CTF-вариациями.
 
 ## 4. `docs/` и `scripts/`
 

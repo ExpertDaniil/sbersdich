@@ -190,6 +190,22 @@ class AgentLoop:
                 return False, "post-fix security scan still has supported findings"
             if clean_scan is None:
                 return False, "fix mode has no successful post-action security scan"
+        elif decision.mode == "ctf":
+            if not contract.artifacts:
+                return False, "CTF task has no explicit answer artifact contract"
+            changed = set(feedback.report.changes.all_paths())
+            validation_root = canonical_path(feedback.report.target)
+            expected = {
+                canonical_path(artifact.path).relative_to(validation_root).as_posix()
+                for artifact in contract.artifacts
+            }
+            if not expected.issubset(changed):
+                return False, "CTF answer artifact was not produced during this run"
+            if not any(
+                event.action and event.action.name == "write_exact_text"
+                for event in successful_tools
+            ):
+                return False, "CTF task has no successful answer write"
         elif decision.mode == "general" and not contract.artifacts:
             return False, "general task has no verifiable artifact contract"
         elif not successful_tools:
@@ -303,7 +319,11 @@ class AgentLoop:
                             baseline=baseline,
                             artifacts=contract.artifacts,
                             commands=self.validation_commands,
-                            check_python_syntax=True,
+                            # CTF evidence may deliberately contain malformed or
+                            # partial source; the mode cannot edit it, so syntax
+                            # validation would reject a correct flag for the
+                            # wrong reason.
+                            check_python_syntax=decision.mode != "ctf",
                         )
                     )
                     provisional = ValidationFeedback(

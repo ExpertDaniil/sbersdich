@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic task-result validation for audit, fix and forensics modes."""
+"""Deterministic task-result validation for every supported agent mode."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ except ImportError:  # Direct execution from the agent directory.
     )
 
 
-VALID_MODES = frozenset({"audit", "fix", "forensics", "general"})
+VALID_MODES = frozenset({"audit", "fix", "forensics", "ctf", "general"})
 ARTIFACT_KINDS = frozenset(
     {"file", "text", "exact-text", "json", "security-report", "incident-report"}
 )
@@ -390,7 +390,7 @@ def validate_change_policy(
     allowed.update(artifact_relative_paths(policy.target, policy.artifacts))
     changed = changes.all_paths()
     violations: list[str] = []
-    if policy.mode in {"audit", "forensics"}:
+    if policy.mode in {"audit", "forensics", "ctf"}:
         violations.extend(path for path in changed if path not in allowed)
     else:
         violations.extend(path for path in changed if protected_path(path))

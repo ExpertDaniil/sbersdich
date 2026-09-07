@@ -69,3 +69,26 @@ python3 -m evaluation.portability \
 проверка провалена, но JSON-отчёт сохранён; `2` — отчёт записать не удалось.
 
 Подробности: [`../docs/C12_REPORT.md`](../docs/C12_REPORT.md).
+
+## C-13: generated CTF variations
+
+C-13 добавляет отдельный `ctf`-режим и проверяет его на трёх независимых
+задачах, которые создаются только во временных каталогах:
+
+- Base64 → ROT13 для текстового артефакта;
+- чтение бинарного файла → hex → repeating XOR;
+- unpadded Base64URL → ограниченная gzip-распаковка.
+
+```bash
+python3 -m evaluation.ctf_suite \
+  --output evaluation/results/c13_ctf.json
+```
+
+Suite прогоняет настоящий classifier, task contract, режимный tool registry,
+agent loop и validator. Внутренний validator проверяет создание только
+заявленного output; внешний exact-verifier отдельно сравнивает байты ответа с
+эталоном. Ответ не передаётся pipeline-driver и не помещается в workspace.
+
+Код возврата `0` означает 3/3; `1` — хотя бы одна задача не решена; `2` —
+невозможно безопасно записать JSON-отчёт. Подробности:
+[`../docs/C13_REPORT.md`](../docs/C13_REPORT.md).
