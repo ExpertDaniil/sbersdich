@@ -26,6 +26,33 @@ Runtime агента, инструменты команды, прежние work
 
 `local_task/insecure-api-app` — общий пример приложения, а не седьмая задача.
 
+## Подтверждённый официальный публичный прогон
+
+7 сентября 2026 года [GitHub Actions run 34160635991](https://github.com/ExpertDaniil/sbersdich/actions/runs/34160635991)
+на коммите `d0ec5fa4e5fd8ddf803d2ffa7258f6c5d28454f7` завершился успешно.
+Все шесть задач получили `reward = 1` от оригинальных verifier. В скачанном
+artifact дополнительно проверены контрольная сумма ZIP, agent.log и вывод pytest:
+
+| Задача | Оригинальный verifier | Время процесса агента, с |
+| --- | --- | ---: |
+| hello-file | reward 1 | 11.894 |
+| bye-file | reward 1 | 12.146 |
+| find-sqli-login | 3/3 pytest, reward 1 | 14.100 |
+| fix-sqli-login | 9/9 pytest, reward 1 | 28.029 |
+| fix-sqli-search | 8/8 pytest, reward 1 | 28.177 |
+| incident-log-forensics | reward 1 | 11.993 |
+
+Суммарное время процессов агента — 106.339 с (без подготовки контейнеров и
+верификации). Во всех шести agent.log: 0 запросов к модели, 0 модельных токенов.
+ZIP: 130 552 байта, SHA256
+`6aa087528fcec147980a25d2e06371ce1cd8ce78a49401e37dbf117228ad94bf`.
+ACP digest:
+`sha256:1324d7bb140422a9929f5bc538f55ec0480d2731742effee02bf67604130c8a3`.
+
+Этот первый прогон использовал `sh ./run.sh`. После него вызов уточнён до прямого
+`./run.sh`, чтобы дополнительно проверять shebang и исполняемость entrypoint,
+как при штатном запуске. Изменение вызова не меняет содержимое submission ZIP.
+
 ## Как устроен прогон
 
 1. Существующий сборщик создаёт ZIP с production `run.sh`. C16 проверяет размер

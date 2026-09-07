@@ -245,6 +245,8 @@ class OfficialExecutionOrderTests(unittest.TestCase):
         self.assertLess(agent_index, upload_index)
         self.assertLess(upload_index, verifier_index)
         self.assertIn(c16.REMOTE_AGENT, calls[agent_index])
+        self.assertEqual(calls[agent_index][-2], "./run.sh")
+        self.assertNotIn("sh", calls[agent_index])
         self.assertEqual(calls[agent_index][-1], "fixture instruction with 'quotes' and $shell characters")
         start = next(argv for argv in calls if argv[1] == "run")
         self.assertEqual(start[start.index("--network") + 1], "none")

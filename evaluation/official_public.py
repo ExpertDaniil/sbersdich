@@ -312,7 +312,7 @@ def run_task(docker: str, prepared: Path, submission: Path, task_id: str,
         instruction = (task_dir / "instruction.md").read_text(encoding="utf-8")
         agent = execute([docker, "exec", "--workdir", REMOTE_AGENT,
                         "--env", "OPENAI_API_KEY=", "--env", "OPENAI_BASE_URL=", "--env", "LOCAL_AGENT_MODEL=",
-                        name, "sh", "./run.sh", instruction],
+                        name, "./run.sh", instruction],
                         output / "agent.log", timeout=float(task["agent_timeout"]))
         result["agent"] = asdict(agent)
         if agent.timed_out or agent.exit_code != 0:
