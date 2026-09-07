@@ -8,12 +8,12 @@ from pathlib import Path
 from agent.core.llm import ModelUsage
 
 from .contracts import KernelLimits, ScaffoldRunResult
-from .distiller import RepositoryDistillerProvider
 from .extensions import ScaffoldExtension
 from .kernel import AgentKernel
 from .planner import HybridPlanner
 from .providers import LegacySecurityProvider, WorkspaceFileProvider
 from .registry import ToolBus
+from .security_relevance import SecurityAwareRepositoryDistillerProvider
 from .verifier import LegacyTaskVerifier
 
 
@@ -38,8 +38,9 @@ def build_default_application(
 ) -> ScaffoldApplication:
     providers = [
         # Structural repository understanding goes first so the planner can localize
-        # cheaply before falling back to broad file reads or command execution.
-        RepositoryDistillerProvider(workdir),
+        # cheaply. Security tasks keep generic lexical ranking but add static risk
+        # priors; those priors are localization hints, never trusted findings.
+        SecurityAwareRepositoryDistillerProvider(workdir),
         LegacySecurityProvider(workdir),
         WorkspaceFileProvider(workdir),
     ]
