@@ -7,6 +7,7 @@ instruction
   -> classifier / task contract
   -> deterministic fast path or local-model planner
   -> Repository Distiller (tree / ranking / skeleton / symbols)
+  -> Cyber ACI (search / bounded view / checked edit / proof check)
   -> hypothesis graph + trusted evidence ledger
   -> capability-gated ToolBus
   -> tool provider / persistent session
@@ -43,6 +44,26 @@ python3 scripts/benchmark_distiller.py \
 ```
 
 The competition-contract CI runs this benchmark before the Harbor-style upload smoke tests, so a localization regression fails the branch even when the old deterministic public-task fast path still succeeds.
+
+## Cyber ACI
+
+The default scaffold now exposes a compact Agent-Computer Interface instead of making the model depend on shell-like, high-entropy interactions. Repository work should normally follow:
+
+```text
+search_surface
+  -> view_window
+  -> checked_edit
+  -> run_check
+```
+
+- `search_surface` tokenizes a natural-language query into a few high-information terms, merges bounded workspace matches, and reranks them using the shared security-aware Repository Distiller. Only the top 12 locations are returned by default; lower-ranked overflow is summarized as a count.
+- `view_window` returns at most 120 numbered lines plus a full-file SHA-256. The digest is an edit capability token: it proves which exact file version the model inspected.
+- `checked_edit` replaces one inclusive line range only when the SHA-256 still matches. Stale views fail closed. Python, JSON and TOML candidates are parsed before the atomic write, and rejected edits never touch the workspace. A successful edit automatically reopens a small post-edit window and returns a bounded unified diff.
+- `run_check` exposes structured proof profiles (`python-syntax`, `pytest`, `git-diff`, `git-status`) on top of the existing command allowlist rather than arbitrary shell execution.
+
+The ACI is task-policy aware. `audit` and `forensics` receive read/search only; `fix` and `general` can additionally execute checks and mutate. ToolBus still applies the global capability ladder, so an INSPECT-only budget exposes only `view_window`. The ACI and Repository Distiller share one cached index in the production composition root rather than rescanning the repository independently.
+
+Legacy `read_file`, `search_text`, `apply_patch` and `run_command` remain available as fallback interfaces for operations the compact ACI cannot express. The planner prompt explicitly prefers the compact protocol first.
 
 Extension points remain deliberately small:
 
