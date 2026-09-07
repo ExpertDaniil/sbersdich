@@ -7,6 +7,7 @@ from pathlib import Path
 
 from agent.core.llm import ModelUsage
 
+from .aci import CyberACIProvider
 from .contracts import KernelLimits, ScaffoldRunResult
 from .extensions import ScaffoldExtension
 from .kernel import AgentKernel
@@ -36,11 +37,12 @@ def build_default_application(
     limits: KernelLimits | None = None,
     extensions: tuple[ScaffoldExtension, ...] = (),
 ) -> ScaffoldApplication:
+    # Distiller and ACI share one cached structural index. This avoids paying twice
+    # for repository scanning while still keeping provider responsibilities separate.
+    distiller_provider = SecurityAwareRepositoryDistillerProvider(workdir)
     providers = [
-        # Structural repository understanding goes first so the planner can localize
-        # cheaply. Security tasks keep generic lexical ranking but add static risk
-        # priors; those priors are localization hints, never trusted findings.
-        SecurityAwareRepositoryDistillerProvider(workdir),
+        distiller_provider,
+        CyberACIProvider(workdir, distiller=distiller_provider.distiller),
         LegacySecurityProvider(workdir),
         WorkspaceFileProvider(workdir),
     ]
