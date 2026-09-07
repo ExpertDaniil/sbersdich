@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent.strategies import StrategyDecision
+from agent.tools.ctf import transform_ctf_data
 from agent.tools.forensics import (
     analyze_incident,
     ensure_output_outside_evidence,
@@ -45,6 +46,7 @@ MODE_ACTIONS = {
     "audit": READ_ACTIONS | {"security_scan"},
     "fix": READ_ACTIONS | WRITE_ACTIONS | {"security_scan", "sql_parameterize"},
     "forensics": READ_ACTIONS | {"forensics_analyze"},
+    "ctf": READ_ACTIONS | {"ctf_transform", "write_exact_text"},
     "general": READ_ACTIONS | WRITE_ACTIONS | {"write_exact_text"},
 }
 TOOL_ORDER = (
@@ -55,6 +57,7 @@ TOOL_ORDER = (
     "security_scan",
     "sql_parameterize",
     "forensics_analyze",
+    "ctf_transform",
     "write_exact_text",
     "apply_patch",
     "run_command",
@@ -103,6 +106,15 @@ TOOL_DEFINITIONS = {
         {"target": "string=.", "output": "string=incident_report.txt"},
         True,
     ),
+    "ctf_transform": ToolDefinition(
+        "ctf_transform",
+        "Apply an explicit bounded offline decode/decompress/XOR transform chain.",
+        {
+            "value": "string",
+            "steps": "object[]; operations=base32/base64/base64url/hex/url/rot13/"
+            "reverse/xor/gzip/zlib",
+        },
+    ),
     "write_exact_text": ToolDefinition(
         "write_exact_text",
         "Write an exact bounded text artifact requested by the instruction.",
@@ -150,6 +162,7 @@ class SecurityToolRegistry:
             "security_scan": self._security_scan,
             "sql_parameterize": self._sql_parameterize,
             "forensics_analyze": self._forensics_analyze,
+            "ctf_transform": self._ctf_transform,
             "write_exact_text": self._write_exact_text,
             "apply_patch": self._apply_patch,
             "run_command": self._run_command,
@@ -354,6 +367,17 @@ class SecurityToolRegistry:
             True,
             f"wrote exact UTF-8 content to {relative}",
             {"path": str(output), "characters": len(content)},
+        )
+
+    def _ctf_transform(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(arguments, {"value", "steps"}, "ctf_transform")
+        if set(arguments) != {"value", "steps"}:
+            raise ToolPolicyError("ctf_transform requires value and steps")
+        data = transform_ctf_data(arguments["value"], arguments["steps"])
+        return ToolResult(
+            True,
+            f"applied {len(data['operations'])} bounded CTF transform(s)",
+            data,
         )
 
     def _apply_patch(self, arguments: dict[str, Any]) -> ToolResult:

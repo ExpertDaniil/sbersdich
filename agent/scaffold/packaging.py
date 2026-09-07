@@ -68,12 +68,22 @@ def _zip_info(name: str, executable: bool) -> zipfile.ZipInfo:
     return info
 
 
+def _submission_bytes(path: Path) -> bytes:
+    """Use Linux line endings for shell scripts without modifying the checkout."""
+
+    content = path.read_bytes()
+    if path.suffix.lower() == ".sh":
+        return content.replace(b"\r\n", b"\n")
+    return content
+
+
 def build_submission(repo_root: Path, output: Path) -> BuildResult:
     """Build exactly the archive that the competition site should receive.
 
     The root ``run.sh`` is the production contract.  ``run_scaffold.sh`` is a
     developer convenience entrypoint and must never silently replace the file
-    Harbor will execute.
+    Harbor will execute. Shell scripts are stored with LF line endings so the
+    Linux runtime can execute archives built from Windows working copies.
     """
 
     repo_root = repo_root.resolve()
@@ -84,10 +94,10 @@ def build_submission(repo_root: Path, output: Path) -> BuildResult:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     entries: list[tuple[str, bytes, bool]] = [
-        ("run.sh", launcher.read_bytes(), True),
+        ("run.sh", _submission_bytes(launcher), True),
     ]
     entries.extend(
-        (member, path.read_bytes(), bool(path.stat().st_mode & stat.S_IXUSR))
+        (member, _submission_bytes(path), bool(path.stat().st_mode & stat.S_IXUSR))
         for path, member in _agent_files(repo_root)
     )
     names = [name for name, _, _ in entries]

@@ -21,6 +21,7 @@ from agent.validators import (
 )
 
 from .contracts import build_task_contract
+from .ctf_completion import check_ctf_completion
 from .models import (
     ActionDriver,
     AgentAction,
@@ -190,6 +191,8 @@ class AgentLoop:
                 return False, "post-fix security scan still has supported findings"
             if clean_scan is None:
                 return False, "fix mode has no successful post-action security scan"
+        elif decision.mode == "ctf":
+            return check_ctf_completion(contract, events, feedback.report)
         elif decision.mode == "general" and not contract.artifacts:
             return False, "general task has no verifiable artifact contract"
         elif not successful_tools:
@@ -303,7 +306,11 @@ class AgentLoop:
                             baseline=baseline,
                             artifacts=contract.artifacts,
                             commands=self.validation_commands,
-                            check_python_syntax=True,
+                            # CTF evidence may deliberately contain malformed or
+                            # partial source; the mode cannot edit it, so syntax
+                            # validation would reject a correct flag for the
+                            # wrong reason.
+                            check_python_syntax=decision.mode != "ctf",
                         )
                     )
                     provisional = ValidationFeedback(

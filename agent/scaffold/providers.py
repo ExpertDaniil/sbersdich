@@ -11,6 +11,7 @@ from typing import Any
 from agent.core.models import AgentAction, ToolResult
 from agent.core.tools import SecurityToolRegistry
 from agent.core.workspace import resolve_workspace_path
+from agent.validators import canonical_path
 
 from .contracts import CapabilityLevel, ExecutionContext, ToolSpec
 
@@ -89,7 +90,8 @@ class WorkspaceFileProvider:
     name = "workspace-files"
 
     def __init__(self, workdir: Path):
-        self.workdir = workdir
+        # Normalize Windows short/long directory aliases before relative_to().
+        self.workdir = canonical_path(workdir)
 
     def catalog(self, context: ExecutionContext) -> tuple[ToolSpec, ...]:
         modes = ("general", "fix")

@@ -472,6 +472,7 @@ def check_stdlib_runtime_dependencies() -> str:
         REPO_ROOT / "agent" / "core" / "loop.py",
         REPO_ROOT / "agent" / "core" / "workspace.py",
         REPO_ROOT / "agent" / "tools" / "forensics.py",
+        REPO_ROOT / "agent" / "tools" / "ctf.py",
         REPO_ROOT / "agent" / "tools" / "security_scan.py",
         REPO_ROOT / "agent" / "tools" / "sql_parameterize.py",
         REPO_ROOT / "agent" / "validators.py",

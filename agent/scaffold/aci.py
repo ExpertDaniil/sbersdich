@@ -89,6 +89,7 @@ ACI_MODE_BUNDLES: dict[str, tuple[str, ...]] = {
     "audit": ("view_window", "search_surface"),
     "fix": ("view_window", "search_surface", "run_check", "checked_edit"),
     "forensics": ("view_window", "search_surface"),
+    "ctf": ("view_window", "search_surface"),
     "general": ("view_window", "search_surface", "run_check", "checked_edit"),
 }
 

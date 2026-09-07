@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent.core.ctf_completion import check_ctf_completion
 from agent.core.models import ValidationFeedback
 from agent.validators import ValidationPolicy, validate_task
 
@@ -33,7 +34,7 @@ class LegacyTaskVerifier:
                 baseline=context.baseline,
                 artifacts=context.contract.artifacts,
                 commands=(),
-                check_python_syntax=True,
+                check_python_syntax=context.decision.mode != "ctf",
             )
         )
         if not report.passed:
@@ -61,6 +62,10 @@ class LegacyTaskVerifier:
                 elif clean_scan is None:
                     passed = False
                     reason = "fix mode has no successful post-action security scan"
+        elif context.decision.mode == "ctf":
+            passed, reason = check_ctf_completion(
+                context.contract, context.events, report
+            )
         elif context.decision.mode == "general" and not context.contract.artifacts:
             passed = False
             reason = "general task has no deterministic artifact contract"
