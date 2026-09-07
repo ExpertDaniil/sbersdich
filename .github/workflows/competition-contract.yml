@@ -40,7 +40,11 @@ jobs:
         run: |
           python3 scripts/benchmark_distiller.py \
             --public-root /tmp/public \
-            --json-output /tmp/distiller-benchmark.json
+            --json-output /tmp/distiller-benchmark.json \
+            --min-top1-rate 1.0 \
+            --min-top3-rate 1.0 \
+            --min-top5-rate 1.0 \
+            --min-context-reduction 0.90
 
       - name: Stage artifact exactly like installed submission
         run: |
