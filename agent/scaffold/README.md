@@ -8,6 +8,7 @@ instruction
   -> deterministic fast path or local-model planner
   -> Repository Distiller (tree / ranking / skeleton / symbols)
   -> Cyber ACI (search / bounded view / checked edit / proof check)
+  -> Candidate Arena (isolated alternatives / score / winner promotion)
   -> hypothesis graph + trusted evidence ledger
   -> capability-gated ToolBus
   -> tool provider / persistent session
@@ -64,6 +65,23 @@ search_surface
 The ACI is task-policy aware. `audit` and `forensics` receive read/search only; `fix` and `general` can additionally execute checks and mutate. ToolBus still applies the global capability ladder, so an INSPECT-only budget exposes only `view_window`. The ACI and Repository Distiller share one cached index in the production composition root rather than rescanning the repository independently.
 
 Legacy `read_file`, `search_text`, `apply_patch` and `run_command` remain available as fallback interfaces for operations the compact ACI cannot express. The planner prompt explicitly prefers the compact protocol first.
+
+## Candidate Arena
+
+Uncertain fixes no longer need to be tried serially against the real task workspace. `arena_evaluate` accepts up to four distinct unified-diff candidates and evaluates them in private task-workspace copies. The runtime, not the model, controls branch width from the current confidence:
+
+```text
+confidence >= 0.80  -> 1 branch
+confidence >= 0.55  -> 2 branches
+confidence >= 0.30  -> 3 branches
+otherwise           -> 4 branches
+```
+
+Each evaluated branch must first apply cleanly and pass bounded static syntax validation. The arena records the deterministic security-scanner finding delta, penalizes unnecessarily large patches, and can optionally run `pytest` before ranking. Invalid syntax or failed requested tests make a branch ineligible rather than allowing it to poison later reasoning.
+
+Evaluation is side-effect free with respect to the real workspace. `arena_promote` is a separate MUTATE capability and only accepts the deterministic winner. Before promotion, every changed source file is compared against the SHA-256 captured at evaluation time; concurrent or intervening edits therefore invalidate promotion instead of silently composing stale patches. Candidate branches never get merged.
+
+This gives code-fix tasks two paths: a high-confidence one-shot change through `checked_edit`, or uncertainty-aware branch-and-select through Candidate Arena. Both converge back into deterministic `run_check` and final verification.
 
 Extension points remain deliberately small:
 
