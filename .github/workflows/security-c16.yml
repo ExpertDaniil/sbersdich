@@ -1,0 +1,59 @@
+name: security-c16-official-public
+
+on:
+  push:
+    branches: [security/c15-fix-validation]
+    paths:
+      - 'agent/**'
+      - 'security/**'
+      - 'evaluation/**'
+      - 'scripts/**'
+      - 'run.sh'
+      - '.github/workflows/security-c16.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  official-public:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout the tested branch
+        uses: actions/checkout@v4
+      - name: Set up development Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install host test dependency before execution
+        run: python -m pip install pytest==9.1.1
+      - name: Check existing components and C16 harness
+        run: |
+          bash scripts/check_all.sh
+          bash evaluation/verify.sh
+      - name: Checkout immutable organizer fixtures
+        uses: actions/checkout@v4
+        with:
+          repository: SecureIntelligent/UniversalAgenticCompetitionPublic
+          ref: b95c62fec81656e338af54045efa688fd4979615
+          path: .c16-public
+          persist-credentials: false
+      - name: Build the production submission once
+        run: python scripts/build_scaffold_submission.py --output evaluation/results/c16/submission.zip
+      - name: Prepare ACP and original task images (network allowed)
+        run: python -m evaluation.official_public prepare --public-root .c16-public --output evaluation/results/c16/prepared
+      - name: Run all six original verifiers (task network disabled)
+        run: python -m evaluation.official_public run --prepared evaluation/results/c16/prepared --submission evaluation/results/c16/submission.zip --output evaluation/results/c16/run
+      - name: Preserve ZIP, preparation logs and official results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c16-official-public-${{ github.sha }}
+          path: |
+            evaluation/results/c16/submission.zip
+            evaluation/results/c16/prepared/*.json
+            evaluation/results/c16/prepared/*.log
+            evaluation/results/c16/run/
+          if-no-files-found: warn
+          retention-days: 14
