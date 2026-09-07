@@ -22,6 +22,7 @@ from agent.validators import (
 
 from .contracts import build_task_contract
 from .ctf_completion import check_ctf_completion
+from .fix_validation import failed_validation_reason, validate_fix_task
 from .models import (
     ActionDriver,
     AgentAction,
@@ -176,7 +177,8 @@ class AgentLoop:
         feedback: ValidationFeedback,
     ) -> tuple[bool, str]:
         if not feedback.report.passed:
-            return False, "deterministic validator reported failed checks"
+            return False, (failed_validation_reason(feedback.report) if decision.mode == "fix"
+                           else "deterministic validator reported failed checks")
         successful_tools = [
             event
             for event in events
@@ -299,19 +301,22 @@ class AgentLoop:
                     if validations >= self.limits.max_validations:
                         raise LoopError("validation-attempt budget exhausted")
                     validations += 1
-                    report = validate_task(
-                        ValidationPolicy(
-                            mode=decision.mode,
-                            target=self.workdir,
-                            baseline=baseline,
-                            artifacts=contract.artifacts,
-                            commands=self.validation_commands,
-                            # CTF evidence may deliberately contain malformed or
-                            # partial source; the mode cannot edit it, so syntax
-                            # validation would reject a correct flag for the
-                            # wrong reason.
-                            check_python_syntax=decision.mode != "ctf",
-                        )
+                    policy = ValidationPolicy(
+                        mode=decision.mode,
+                        target=self.workdir,
+                        baseline=baseline,
+                        artifacts=contract.artifacts,
+                        commands=self.validation_commands,
+                        # CTF evidence may deliberately contain malformed or
+                        # partial source; the mode cannot edit it, so syntax
+                        # validation would reject a correct flag for the
+                        # wrong reason.
+                        check_python_syntax=decision.mode != "ctf",
+                    )
+                    report = (
+                        validate_fix_task(policy, contract.project_checks,
+                            remaining_seconds=self.limits.deadline_seconds - (self.clock() - started))
+                        if decision.mode == "fix" else validate_task(policy)
                     )
                     provisional = ValidationFeedback(
                         passed=report.passed,

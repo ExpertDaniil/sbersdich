@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent.core.ctf_completion import check_ctf_completion
+from agent.core.fix_validation import failed_validation_reason, validate_fix_task
 from agent.core.models import ValidationFeedback
 from agent.validators import ValidationPolicy, validate_task
 
@@ -27,18 +28,22 @@ class LegacyTaskVerifier:
         return scans[-1].data.get("finding_count") == 0
 
     def verify(self, context: VerificationContext) -> VerificationResult:
-        report = validate_task(
-            ValidationPolicy(
-                mode=context.decision.mode,
-                target=context.workdir,
-                baseline=context.baseline,
-                artifacts=context.contract.artifacts,
-                commands=(),
-                check_python_syntax=context.decision.mode != "ctf",
-            )
+        policy = ValidationPolicy(
+            mode=context.decision.mode,
+            target=context.workdir,
+            baseline=context.baseline,
+            artifacts=context.contract.artifacts,
+            commands=(),
+            check_python_syntax=context.decision.mode != "ctf",
+        )
+        report = (
+            validate_fix_task(policy, context.contract.project_checks,
+                              remaining_seconds=context.remaining_seconds)
+            if context.decision.mode == "fix" else validate_task(policy)
         )
         if not report.passed:
-            reason = "deterministic validator reported failed checks"
+            reason = (failed_validation_reason(report) if context.decision.mode == "fix"
+                      else "deterministic validator reported failed checks")
             feedback = ValidationFeedback(False, reason, report)
             return VerificationResult(False, reason, feedback)
 

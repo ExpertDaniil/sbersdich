@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from agent.strategies import StrategyDecision
 from agent.validators import ArtifactRule, ValidationReport
+from .project_checks import ProjectCheckPlan
 
 
 TERMINAL_STATUSES = frozenset({"succeeded", "failed"})
@@ -105,6 +106,7 @@ class LoopEvent:
 class TaskContract:
     artifacts: tuple[ArtifactRule, ...] = ()
     exact_writes: tuple[tuple[Path, str], ...] = ()
+    project_checks: ProjectCheckPlan | None = None
 
 
 @dataclass(frozen=True)

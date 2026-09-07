@@ -9,6 +9,7 @@ from agent.strategies import StrategyDecision
 from agent.validators import ArtifactRule, canonical_path, path_is_within
 
 from .models import TaskContract
+from .project_checks import discover_project_checks
 
 
 EXACT_FILE_PATTERNS = (
@@ -144,4 +145,5 @@ def build_task_contract(
             for path, value in exact_writes
         ),
         exact_writes=exact_writes,
+        project_checks=(discover_project_checks(instruction, root) if decision.mode == "fix" else None),
     )

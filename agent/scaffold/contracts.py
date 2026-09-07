@@ -89,6 +89,7 @@ class VerificationContext:
     contract: TaskContract
     baseline: Any
     events: tuple[LoopEvent, ...]
+    remaining_seconds: float | None = None
 
 
 @dataclass(frozen=True)

@@ -208,6 +208,7 @@ class AgentKernel:
                             contract=contract,
                             baseline=baseline,
                             events=tuple(state.events),
+                            remaining_seconds=max(0.0, self.limits.deadline_seconds - (self.clock() - started)),
                         )
                     )
                     if final_verification.feedback is None:
