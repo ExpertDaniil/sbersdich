@@ -21,6 +21,7 @@ from .contracts import (
     VerificationContext,
     VerificationResult,
 )
+from .hypothesis_controller import RuntimeHypothesisController
 from .interfaces import Planner, Verifier
 from .registry import RESERVED_ACTIONS, ToolBus
 from .state import AgentState
@@ -43,6 +44,7 @@ class AgentKernel:
         limits: KernelLimits | None = None,
         extension_guidance: str = "",
         clock: Callable[[], float] = time.monotonic,
+        hypothesis_controller: RuntimeHypothesisController | None = None,
     ):
         self.workdir = canonical_path(workdir)
         self.tool_bus = tool_bus
@@ -51,6 +53,7 @@ class AgentKernel:
         self.limits = limits or KernelLimits()
         self.extension_guidance = extension_guidance
         self.clock = clock
+        self.hypothesis_controller = hypothesis_controller or RuntimeHypothesisController()
 
     def _result(
         self,
@@ -83,6 +86,7 @@ class AgentKernel:
         last_validation = None
         final_verification: VerificationResult | None = None
         repeated_actions: Counter[str] = Counter()
+        control_rejections = 0
         started = self.clock()
         tools = ()
 
@@ -114,6 +118,7 @@ class AgentKernel:
                     raise ScaffoldKernelError("step budget exhausted")
 
                 remaining = max(0.0, self.limits.deadline_seconds - elapsed)
+                snapshot = state.snapshot(tools)
                 planning_context = PlanningContext(
                     instruction=instruction,
                     workdir=self.workdir,
@@ -122,7 +127,7 @@ class AgentKernel:
                     validation_playbook=validation_playbook,
                     contract=contract,
                     tools=tools,
-                    state_snapshot=state.snapshot(tools),
+                    state_snapshot=snapshot,
                     events=tuple(state.events),
                     last_validation=last_validation,
                     remaining_seconds=remaining,
@@ -140,6 +145,33 @@ class AgentKernel:
                     )
                 if not isinstance(action.arguments, dict):
                     raise ScaffoldKernelError("action arguments must be an object")
+
+                control = self.hypothesis_controller.evaluate(
+                    plan,
+                    state_snapshot=snapshot,
+                    tools=tools,
+                )
+                if not control.allowed:
+                    control_rejections += 1
+                    state.record_control_rejection(
+                        reason=control.reason,
+                        required_strategy=(
+                            control.required_strategy.value
+                            if control.required_strategy is not None
+                            else None
+                        ),
+                        minimum_capability=(
+                            int(control.minimum_capability)
+                            if control.minimum_capability is not None
+                            else None
+                        ),
+                    )
+                    if control_rejections > self.limits.max_repeated_action:
+                        raise ScaffoldKernelError(
+                            f"runtime control rejected planner repeatedly: {control.reason}"
+                        )
+                    continue
+                control_rejections = 0
 
                 if action.name not in RESERVED_ACTIONS:
                     fingerprint = action.fingerprint()

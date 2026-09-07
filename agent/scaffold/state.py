@@ -107,6 +107,8 @@ class AgentState:
         self._evidence_fingerprints: set[str] = set()
         self._duplicate_observations = 0
         self._last_progress_reason = "no trusted observation yet"
+        self._control_rejections = 0
+        self._last_control_feedback: dict[str, Any] | None = None
 
     @property
     def current_hypothesis_id(self) -> str | None:
@@ -115,6 +117,21 @@ class AgentState:
     @property
     def recovery_required(self) -> bool:
         return self._duplicate_observations >= RECOVERY_AFTER_DUPLICATES
+
+    def record_control_rejection(
+        self,
+        *,
+        reason: str,
+        required_strategy: str | None,
+        minimum_capability: int | None,
+    ) -> None:
+        self._control_rejections += 1
+        self._last_control_feedback = {
+            "reason": _bounded(reason, 700),
+            "required_strategy": required_strategy,
+            "minimum_capability": minimum_capability,
+        }
+        self._last_progress_reason = "runtime controller rejected non-progressing plan"
 
     def register_plan(self, plan: PlanDecision, *, step: int) -> None:
         statement = _bounded(plan.hypothesis)
@@ -153,6 +170,7 @@ class AgentState:
 
         self._current_hypothesis_id = selected
         self._action_hypothesis[plan.action.fingerprint()] = selected
+        self._last_control_feedback = None
 
     def _record_evidence(
         self,
@@ -305,6 +323,8 @@ class AgentState:
             "duplicate_observations": self._duplicate_observations,
             "last_progress_reason": self._last_progress_reason,
             "recommended_capability_level": recommended,
+            "control_rejections": self._control_rejections,
+            "last_control_feedback": self._last_control_feedback,
             "capability_ladder": [
                 {"level": level, "tools": sorted(names)}
                 for level, names in sorted(ladder.items())
