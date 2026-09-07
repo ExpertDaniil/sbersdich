@@ -17,17 +17,32 @@ instruction
 
 ## Repository Distiller
 
-Repository-level tasks now get a bounded structural localization layer before broad file reads. It is intentionally offline and standard-library only.
+Repository-level tasks get a bounded structural localization layer before broad file reads. It is intentionally offline and standard-library only.
 
 Available tools:
 
 - `repo_tree` — compact bounded task-repository structure;
 - `symbol_index` — Python AST plus lightweight JS/TS/Go/Rust/Java/Kotlin/C#/C/C++/Ruby/PHP/Shell/SQL symbols;
-- `rank_relevant_files` — deterministic hybrid ranking over paths, symbols and bounded text with IDF-style weighting;
+- `rank_relevant_files` — deterministic hybrid ranking over paths, symbols and bounded text; security tasks add static risk priors without turning those priors into trusted findings;
 - `repo_skeleton` — signatures and locations without function bodies;
 - `inspect_symbol` — one focused symbol window plus bounded repository references.
 
 The index excludes answer/verifier paths, symlinks, VCS/cache/generated directories, limits indexed files/bytes, and automatically refreshes after workspace changes. The planner is instructed to prefer localization through these distilled views before repeatedly reading whole files.
+
+Security-aware ranking lives in `security_relevance.py` rather than the generic distiller. The separation is deliberate: ordinary repository queries retain generic lexical/structural ranking, while security/audit/fix instructions can additionally prioritize source files that contain static risk signals such as attacker-controlled interpolation into SQL, dangerous execution sinks, unsafe deserialization, or disabled verification. These are ranking hints only; evidence still comes from tools and validators.
+
+The public-fixture regression benchmark can be run against the official competition repository:
+
+```bash
+python3 scripts/benchmark_distiller.py \
+  --public-root /path/to/UniversalAgenticCompetitionPublic \
+  --min-top1-rate 1.0 \
+  --min-top3-rate 1.0 \
+  --min-top5-rate 1.0 \
+  --min-context-reduction 0.90
+```
+
+The competition-contract CI runs this benchmark before the Harbor-style upload smoke tests, so a localization regression fails the branch even when the old deterministic public-task fast path still succeeds.
 
 Extension points remain deliberately small:
 
