@@ -8,6 +8,7 @@ from pathlib import Path
 from agent.core.llm import ModelUsage
 
 from .aci import CyberACIProvider
+from .candidate_arena import CandidateArenaProvider
 from .contracts import KernelLimits, ScaffoldRunResult
 from .extensions import ScaffoldExtension
 from .kernel import AgentKernel
@@ -37,12 +38,13 @@ def build_default_application(
     limits: KernelLimits | None = None,
     extensions: tuple[ScaffoldExtension, ...] = (),
 ) -> ScaffoldApplication:
-    # Distiller and ACI share one cached structural index. This avoids paying twice
-    # for repository scanning while still keeping provider responsibilities separate.
+    # Distiller and ACI share one cached structural index. Candidate Arena is separate:
+    # it owns private transactional copies and can only promote a deterministic winner.
     distiller_provider = SecurityAwareRepositoryDistillerProvider(workdir)
     providers = [
         distiller_provider,
         CyberACIProvider(workdir, distiller=distiller_provider.distiller),
+        CandidateArenaProvider(workdir),
         LegacySecurityProvider(workdir),
         WorkspaceFileProvider(workdir),
     ]
