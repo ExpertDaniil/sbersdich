@@ -4,7 +4,7 @@
 This is intentionally a small, deterministic benchmark rather than a model benchmark.
 It answers four questions that matter before we build a richer ACI:
 
-1. Does lexical/structural ranking surface the file that actually contains the task bug?
+1. Does lexical/structural/security-aware ranking surface the file that actually contains the task bug?
 2. How much repository text can be replaced by a compact top-file skeleton?
 3. How much data did the offline index need to scan?
 4. How expensive is the first localization pass?
@@ -30,7 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from agent.scaffold.distiller import RepositoryDistiller
+from agent.scaffold.security_relevance import SecurityAwareRepositoryDistiller
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ def run_case(public_root: Path, case: BenchmarkCase) -> CaseResult:
         raise ValueError(f"missing instruction for {case.name}: {instruction_path}")
 
     instruction = instruction_path.read_text(encoding="utf-8")
-    distiller = RepositoryDistiller(workdir)
+    distiller = SecurityAwareRepositoryDistiller(workdir)
 
     started = time.perf_counter()
     ranking = distiller.rank_relevant_files(query=instruction, limit=20)
