@@ -13,7 +13,7 @@ from agent.strategies import classify_instruction
 
 VULNERABLE = '''\nasync def login(conn, username: str, password: str):\n    query = f"SELECT id FROM users WHERE username = '{username}' AND password = '{password}'"\n    return await conn.fetchrow(query)\n'''.lstrip()
 
-GOOD_PATCH = '''\n--- a/auth.py\n+++ b/auth.py\n@@ -1,3 +1,5 @@\n async def login(conn, username: str, password: str):\n-    query = f"SELECT id FROM users WHERE username = '{username}' AND password = '{password}'"\n-    return await conn.fetchrow(query)\n+    query = "SELECT id FROM users WHERE username = $1 AND password = $2"\n+    return await conn.fetchrow(query, username, password)\n'''.lstrip()
+GOOD_PATCH = '''\n--- a/auth.py\n+++ b/auth.py\n@@ -1,3 +1,3 @@\n async def login(conn, username: str, password: str):\n-    query = f"SELECT id FROM users WHERE username = '{username}' AND password = '{password}'"\n-    return await conn.fetchrow(query)\n+    query = "SELECT id FROM users WHERE username = $1 AND password = $2"\n+    return await conn.fetchrow(query, username, password)\n'''.lstrip()
 
 BAD_SYNTAX_PATCH = '''\n--- a/auth.py\n+++ b/auth.py\n@@ -1,3 +1,3 @@\n async def login(conn, username: str, password: str):\n-    query = f"SELECT id FROM users WHERE username = '{username}' AND password = '{password}'"\n+    query = (\n     return await conn.fetchrow(query)\n'''.lstrip()
 
@@ -76,7 +76,6 @@ class CandidateArenaTests(unittest.TestCase):
             by_id = {item["candidate_id"]: item for item in data["candidates"]}
             self.assertEqual(by_id["parameterize"]["findings_delta"], -1)
             self.assertGreater(by_id["parameterize"]["score"], by_id["no_fix"]["score"])
-            # Candidate branches are private: evaluation alone cannot mutate /app/workdir.
             self.assertEqual((root / "auth.py").read_text(encoding="utf-8"), before)
             self.assertEqual((root / "verifier" / "expected.txt").read_text(), "SECRET\n")
 
