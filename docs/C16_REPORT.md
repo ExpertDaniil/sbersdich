@@ -28,30 +28,38 @@ Runtime агента, инструменты команды, прежние work
 
 ## Подтверждённый официальный публичный прогон
 
-7 сентября 2026 года [GitHub Actions run 34160635991](https://github.com/ExpertDaniil/sbersdich/actions/runs/34160635991)
-на коммите `d0ec5fa4e5fd8ddf803d2ffa7258f6c5d28454f7` завершился успешно.
+7 сентября 2026 года [GitHub Actions run 34161140173](https://github.com/ExpertDaniil/sbersdich/actions/runs/34161140173)
+на коммите `ca6e87bf46039bb84ac5974d7d2564e805a7683d` завершился успешно.
+Это финальный прогон с прямым запуском `./run.sh`.
 Все шесть задач получили `reward = 1` от оригинальных verifier. В скачанном
 artifact дополнительно проверены контрольная сумма ZIP, agent.log и вывод pytest:
 
 | Задача | Оригинальный verifier | Время процесса агента, с |
 | --- | --- | ---: |
-| hello-file | reward 1 | 11.894 |
-| bye-file | reward 1 | 12.146 |
-| find-sqli-login | 3/3 pytest, reward 1 | 14.100 |
-| fix-sqli-login | 9/9 pytest, reward 1 | 28.029 |
-| fix-sqli-search | 8/8 pytest, reward 1 | 28.177 |
-| incident-log-forensics | reward 1 | 11.993 |
+| hello-file | reward 1 | 7.478 |
+| bye-file | reward 1 | 7.428 |
+| find-sqli-login | 3/3 pytest, reward 1 | 8.881 |
+| fix-sqli-login | 9/9 pytest, reward 1 | 18.399 |
+| fix-sqli-search | 8/8 pytest, reward 1 | 18.048 |
+| incident-log-forensics | reward 1 | 7.577 |
 
-Суммарное время процессов агента — 106.339 с (без подготовки контейнеров и
+Суммарное время процессов агента — 67.811 с (без подготовки контейнеров и
 верификации). Во всех шести agent.log: 0 запросов к модели, 0 модельных токенов.
 ZIP: 130 552 байта, SHA256
 `6aa087528fcec147980a25d2e06371ce1cd8ce78a49401e37dbf117228ad94bf`.
 ACP digest:
 `sha256:1324d7bb140422a9929f5bc538f55ec0480d2731742effee02bf67604130c8a3`.
 
-Этот первый прогон использовал `sh ./run.sh`. После него вызов уточнён до прямого
-`./run.sh`, чтобы дополнительно проверять shebang и исполняемость entrypoint,
-как при штатном запуске. Изменение вызова не меняет содержимое submission ZIP.
+В обеих fix-задачах C15 также запустил настоящие `pytest tests/` внутри приложения:
+15/15 обычных тестов успешно, затем официальный verifier независимо проверил
+защиту от инъекций на перезапущенном API. Тесты и их настройки агентом не менялись.
+
+Предыдущий [run 34160635991](https://github.com/ExpertDaniil/sbersdich/actions/runs/34160635991)
+тоже дал 6/6 для того же ZIP. В нём использовался `sh ./run.sh`; финальный запуск
+дополнительно проверил shebang и исполняемость entrypoint. Разницу времени между
+двумя CI-машинами нельзя считать оптимизацией агента: runtime ZIP идентичен.
+Результаты и логи финального запуска доступны в artifact
+[`c16-official-public-ca6e87b`](https://github.com/ExpertDaniil/sbersdich/actions/runs/34161140173/artifacts/10032691042).
 
 ## Как устроен прогон
 
