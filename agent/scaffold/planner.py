@@ -55,6 +55,14 @@ class DeterministicFastPath:
     def try_plan(self, context: PlanningContext) -> PlanDecision | None:
         if context.last_validation is not None and not context.last_validation.passed:
             return None
+        # A deterministic action has already failed, so repeating the same
+        # fixed policy cannot add information.  Leave recovery to the model;
+        # the failed ToolResult remains in events/state_snapshot as evidence.
+        if any(
+            event.tool_result is not None and not event.tool_result.ok
+            for event in context.events
+        ):
+            return None
         driver_context = DriverContext(
             instruction=context.instruction,
             workdir=context.workdir,
