@@ -8,7 +8,7 @@ from typing import Any
 from agent.core.config import ModelConfig
 from agent.core.llm import ModelRequestError, ModelUsage, OpenAICompatibleClient
 from agent.core.loop import DeterministicDriver
-from agent.core.models import AgentAction, DriverContext, ToolDefinition
+from agent.core.models import AgentAction, DriverContext, LoopEvent, ToolDefinition
 
 from .contracts import PlanDecision, PlanningContext, PlanStrategy
 
@@ -80,6 +80,50 @@ def _tool_definition(spec) -> ToolDefinition:
     )
 
 
+def _positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _deterministic_fix_supported(events: tuple[LoopEvent, ...]) -> bool:
+    """Keep the SQL fast path only while its own evidence supports it.
+
+    The legacy deterministic fix policy is intentionally narrow: it recognizes
+    tainted SQL construction and applies sql_parameterize. A generic ``fix``
+    classification must not make that policy run SQL tooling on unrelated bugs.
+    Once the first SQL scan is clean, or the rewriter cannot make a change, the
+    scaffold yields immediately to the model with the observations preserved.
+    """
+
+    tool_events = [
+        event
+        for event in events
+        if event.action is not None
+        and event.tool_result is not None
+        and event.tool_result.ok
+    ]
+    scans = [event for event in tool_events if event.action.name == "security_scan"]
+    rewrites = [event for event in tool_events if event.action.name == "sql_parameterize"]
+
+    # One cheap scan is allowed to determine whether this narrow fast path fits.
+    if not scans:
+        return True
+
+    latest_scan_count = scans[-1].tool_result.data.get("finding_count")  # type: ignore[union-attr]
+    if not rewrites:
+        return _positive_int(latest_scan_count)
+
+    latest_change_count = rewrites[-1].tool_result.data.get("change_count")  # type: ignore[union-attr]
+    if not _positive_int(latest_change_count):
+        return False
+
+    # After a real rewrite, allow exactly the confirming scan and deterministic
+    # finish only when that scan is clean. If supported findings remain, the
+    # model must decide what to inspect next instead of blindly finishing.
+    if len(scans) >= 2:
+        return latest_scan_count == 0
+    return True
+
+
 class DeterministicFastPath:
     """Reuse already-proven deterministic flows before spending LLM tokens."""
 
@@ -95,6 +139,10 @@ class DeterministicFastPath:
         if any(
             event.tool_result is not None and not event.tool_result.ok
             for event in context.events
+        ):
+            return None
+        if context.decision.mode == "fix" and not _deterministic_fix_supported(
+            context.events
         ):
             return None
         driver_context = DriverContext(
