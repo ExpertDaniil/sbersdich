@@ -2,7 +2,7 @@ name: sber-competition-contract
 
 on:
   push:
-    branches: [test_govno]
+    branches: [test_govno, test_govno_1]
   workflow_dispatch:
 
 permissions:
