@@ -88,7 +88,13 @@ class SubmissionInspectionTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), before)
 
     def test_unsafe_or_nonruntime_members_are_rejected(self):
-        names = ("../escape", "/absolute", "C:/drive", "agent\\escape.py", "agent.py",
+        # На Windows zipfile сам заменяет обратную косую черту на прямую ещё
+        # при создании тестового ZIP. Поэтому такой путь проверяем напрямую:
+        # иначе тест незаметно подаёт inspect_submission уже безопасное имя.
+        with self.assertRaises(c16.HarnessError):
+            c16.safe_member("agent\\escape.py")
+
+        names = ("../escape", "/absolute", "C:/drive", "agent.py",
                  "agent/agent.py", "agent/tests/test_x.py", "evaluation/results.json", "agent/.env", "agent/key.pem")
         with tempfile.TemporaryDirectory() as tmp:
             for name in names:
