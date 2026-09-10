@@ -10,10 +10,18 @@ cd "$REPO_DIR"
 run_python -m py_compile \
     evaluation/failure_analysis.py \
     evaluation/portability.py \
+    evaluation/ctf_suite.py \
+    evaluation/context_efficiency.py \
     evaluation/tests/test_failure_analysis.py \
-    evaluation/tests/test_portability.py
+    evaluation/tests/test_portability.py \
+    evaluation/tests/test_ctf_suite.py \
+    evaluation/tests/test_context_efficiency.py
 run_python -m unittest discover -s evaluation/tests -p 'test_*.py' -v
 run_python -m evaluation.portability \
     --output evaluation/results/c12_portability.json
+run_python -m evaluation.ctf_suite \
+    --output evaluation/results/c13_ctf.json
+run_python -m evaluation.context_efficiency \
+    --output evaluation/results/a13_context_efficiency.json
 
-printf '%s\n' "C-11/C-12 evaluation verification passed"
+printf '%s\n' "C-11/C-13 and A-13 evaluation verification passed"
