@@ -2,7 +2,7 @@ name: security-c16-official-public
 
 on:
   push:
-    branches: [security/c15-fix-validation]
+    branches: [security/c15-fix-validation, test_govno_1]
     paths:
       - 'agent/**'
       - 'security/**'
