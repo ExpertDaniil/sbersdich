@@ -2,7 +2,7 @@ name: scaffold-checks
 
 on:
   push:
-    branches: [test_govno]
+    branches: [test_govno, test_govno_1]
   pull_request:
     branches: [main]
 
