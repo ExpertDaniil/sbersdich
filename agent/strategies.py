@@ -28,9 +28,9 @@ def classify_instruction(instruction: str) -> StrategyDecision:
     no_modify = contains_any(
         normalized,
         (
-            r"\bdo not modify\b",
-            r"\bwithout modifying\b",
-            r"\bне (?:изменяй|изменять|модифицируй)\b",
+            r"\bdo not (?:modify|fix|change)\b",
+            r"\bwithout (?:modifying|fixing|changing)\b",
+            r"\bне (?:изменяй|изменять|модифицируй|исправляй|исправлять)\b",
         ),
     )
     asks_report = contains_any(
@@ -41,6 +41,10 @@ def classify_instruction(instruction: str) -> StrategyDecision:
         normalized,
         (
             r"\bfix (?:it|them|the|security|vulnerab)",
+            r"\bfix\b.{0,80}\b(?:bug|issue|security|vulnerab|authorization|access[- ]control|permission)\b",
+            r"\b(?:bug|issue|vulnerab|authorization|access[- ]control|permission)\b.{0,120}\bfix\b",
+            r"\bmake\b.{0,50}\bfix\b",
+            r"\brepair\b",
             r"\bremediate\b",
             r"\bpatch\b",
             r"\bисправ(?:ь|ить|ьте)\b",
