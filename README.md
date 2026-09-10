@@ -64,3 +64,12 @@ python3 -m evaluation.failure_analysis \
 `evaluation/`, тестовые задачи и отчёты нужны в репозитории для разработки.
 В финальный архив до 10 МБ должны попасть только runtime-файлы, необходимые
 `run.sh`; состав архива проверяется отдельно перед отправкой.
+
+Местная сборка кандидата:
+
+```bash
+python3 scripts/build_scaffold_submission.py \
+  --output evaluation/results/a16/submission.zip
+```
+
+Результат последней проверки описан в [`docs/A16_REPORT.md`](docs/A16_REPORT.md).
