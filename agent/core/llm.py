@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
@@ -20,6 +23,7 @@ MAX_PLAYBOOK_CHARS = 8_000
 MAX_EVENT_CHARS = 2_000
 MAX_CONTEXT_EVENTS = 6
 RETRYABLE_HTTP_CODES = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+_CURL_STATUS_MARKER = b"\n__LOCAL_AGENT_HTTP_STATUS__:"
 
 
 class ModelRequestError(RuntimeError):
@@ -55,22 +59,7 @@ def _bounded_text(value: object, limit: int) -> str:
     return text[:limit] + "…"
 
 
-def _default_transport(
-    url: str, headers: Mapping[str, str], body: bytes, timeout: float
-) -> Mapping[str, Any]:
-    request = Request(url, data=body, headers=dict(headers), method="POST")
-    try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - адрес проверен
-            raw = response.read(MAX_RESPONSE_BYTES + 1)
-    except HTTPError as error:
-        # Тело ответа намеренно не включается: некоторые серверы отражают поля
-        # запроса, а в заголовке запроса находится ключ доступа.
-        wrapped = ModelRequestError(f"локальная модель вернула HTTP {error.code}")
-        setattr(wrapped, "status_code", error.code)
-        raise wrapped from error
-    except (TimeoutError, URLError, OSError) as error:
-        raise ModelRequestError("локальная модель недоступна или не ответила вовремя") from error
-
+def _decode_payload(raw: bytes) -> Mapping[str, Any]:
     if len(raw) > MAX_RESPONSE_BYTES:
         raise ModelRequestError("ответ локальной модели превышает допустимый размер")
     try:
@@ -82,6 +71,133 @@ def _default_transport(
     return payload
 
 
+def _default_transport(
+    url: str, headers: Mapping[str, str], body: bytes, timeout: float
+) -> Mapping[str, Any]:
+    request = Request(url, data=body, headers=dict(headers), method="POST")
+    try:
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - адрес проверен
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except HTTPError as error:
+        wrapped = ModelRequestError(f"локальная модель вернула HTTP {error.code}")
+        setattr(wrapped, "status_code", error.code)
+        raise wrapped from error
+    except (TimeoutError, URLError, OSError) as error:
+        raise ModelRequestError("локальная модель недоступна или не ответила вовремя") from error
+    return _decode_payload(raw)
+
+
+def _curl_environment() -> dict[str, str]:
+    """Pass networking/runtime variables to curl without leaking model secrets."""
+
+    allowed = {
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "LC_ALL",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+    }
+    return {name: value for name, value in os.environ.items() if name in allowed}
+
+
+def _curl_transport(
+    url: str, headers: Mapping[str, str], body: bytes, timeout: float
+) -> Mapping[str, Any]:
+    """Development transport for hosts where Python TLS and VPN disagree.
+
+    Secrets are stored in a short-lived 0600 header file instead of process
+    arguments, and the request body is delivered on stdin. The default runtime
+    transport remains urllib unless explicitly selected through configuration.
+    """
+
+    header_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix="local-agent-headers-", delete=False
+        ) as handle:
+            header_path = handle.name
+            for name, value in headers.items():
+                if "\r" in name or "\n" in name or "\r" in value or "\n" in value:
+                    raise ModelRequestError("некорректный HTTP-заголовок модели")
+                handle.write(f"{name}: {value}\n")
+        try:
+            os.chmod(header_path, 0o600)
+        except OSError:
+            pass
+
+        curl_timeout = max(0.1, float(timeout))
+        command = [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--request",
+            "POST",
+            "--max-time",
+            f"{curl_timeout:.3f}",
+            "--max-filesize",
+            str(MAX_RESPONSE_BYTES),
+            "--header",
+            f"@{header_path}",
+            "--data-binary",
+            "@-",
+            "--write-out",
+            _CURL_STATUS_MARKER.decode("ascii") + "%{http_code}",
+            url,
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                input=body,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=curl_timeout + 1.0,
+                check=False,
+                env=_curl_environment(),
+            )
+        except (FileNotFoundError, OSError) as error:
+            raise ModelRequestError("curl transport недоступен") from error
+        except subprocess.TimeoutExpired as error:
+            raise ModelRequestError("локальная модель недоступна или не ответила вовремя") from error
+
+        if completed.returncode != 0:
+            if completed.returncode == 28:
+                raise ModelRequestError("локальная модель недоступна или не ответила вовремя")
+            raise ModelRequestError(
+                f"curl transport завершился с кодом {completed.returncode}"
+            )
+
+        raw, marker, status_raw = completed.stdout.rpartition(_CURL_STATUS_MARKER)
+        if not marker:
+            raise ModelRequestError("curl transport не вернул HTTP-статус")
+        try:
+            status = int(status_raw.strip())
+        except ValueError as error:
+            raise ModelRequestError("curl transport вернул некорректный HTTP-статус") from error
+        if status < 200 or status >= 300:
+            wrapped = ModelRequestError(f"локальная модель вернула HTTP {status}")
+            setattr(wrapped, "status_code", status)
+            raise wrapped
+        return _decode_payload(raw)
+    finally:
+        if header_path:
+            try:
+                os.unlink(header_path)
+            except OSError:
+                pass
+
+
 class OpenAICompatibleClient:
     """Минимальный клиент `/chat/completions` без установки зависимостей."""
 
@@ -89,12 +205,17 @@ class OpenAICompatibleClient:
         self,
         config: ModelConfig,
         *,
-        transport: Transport = _default_transport,
+        transport: Transport | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.config = config
-        self.transport = transport
+        if transport is not None:
+            self.transport = transport
+        elif config.transport == "curl":
+            self.transport = _curl_transport
+        else:
+            self.transport = _default_transport
         self.sleeper = sleeper
         self.clock = clock
         self.usage = ModelUsage()
@@ -105,6 +226,7 @@ class OpenAICompatibleClient:
         *,
         max_tokens: int = 512,
         timeout_seconds: float | None = None,
+        json_object: bool = False,
     ) -> str:
         if max_tokens < 1:
             raise ValueError("max_tokens должно быть положительным")
@@ -116,13 +238,19 @@ class OpenAICompatibleClient:
             raise ModelRequestError("не осталось времени на запрос к модели")
         deadline = self.clock() + overall_timeout
 
+        request_payload: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": list(messages),
+            "temperature": 0,
+            "max_tokens": max_tokens,
+        }
+        if self.config.reasoning_effort is not None:
+            request_payload["reasoning"] = {"effort": self.config.reasoning_effort}
+        if json_object and self.config.json_mode:
+            request_payload["response_format"] = {"type": "json_object"}
+
         body = json.dumps(
-            {
-                "model": self.config.model,
-                "messages": list(messages),
-                "temperature": 0,
-                "max_tokens": max_tokens,
-            },
+            request_payload,
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -152,21 +280,13 @@ class OpenAICompatibleClient:
                 retryable = code is None or code in RETRYABLE_HTTP_CODES
                 if not retryable or attempt >= self.config.retry_count:
                     break
-                # Короткая ограниченная задержка не может породить бесконечный цикл.
                 delay = min(0.25 * (2**attempt), 1.0)
                 if self.clock() + delay >= deadline:
                     break
                 self.sleeper(delay)
         raise last_error or ModelRequestError("неизвестная ошибка локальной модели")
 
-    def _consume_payload(self, payload: Mapping[str, Any], request_body: bytes) -> str:
-        try:
-            content = payload["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as error:
-            raise ModelRequestError("в ответе модели отсутствует choices[0].message.content") from error
-        if not isinstance(content, str) or not content.strip():
-            raise ModelRequestError("модель вернула пустой текст")
-
+    def _record_usage(self, payload: Mapping[str, Any], request_body: bytes) -> None:
         usage = payload.get("usage")
         if isinstance(usage, dict):
             prompt_tokens = usage.get("prompt_tokens")
@@ -176,9 +296,18 @@ class OpenAICompatibleClient:
             if isinstance(completion_tokens, int) and completion_tokens >= 0:
                 self.usage.output_tokens += completion_tokens
         else:
-            # Это только грубая оценка для диагностики. Она не смешивается с
-            # фактическими значениями usage, полученными от сервера.
-            self.usage.estimated_tokens += (len(request_body) + len(content) + 3) // 4
+            self.usage.estimated_tokens += (len(request_body) + 3) // 4
+
+    def _consume_payload(self, payload: Mapping[str, Any], request_body: bytes) -> str:
+        self._record_usage(payload, request_body)
+        try:
+            content = payload["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as error:
+            raise ModelRequestError("в ответе модели отсутствует choices[0].message.content") from error
+        if not isinstance(content, str) or not content.strip():
+            raise ModelRequestError("модель вернула пустой текст")
+        if not isinstance(payload.get("usage"), dict):
+            self.usage.estimated_tokens += (len(content) + 3) // 4
         return content
 
     def probe(self, *, timeout_seconds: float | None = None) -> str:
@@ -189,10 +318,6 @@ class OpenAICompatibleClient:
                 {"role": "system", "content": "Reply with only OK."},
                 {"role": "user", "content": "Connection check"},
             ),
-            # Четырёх токенов недостаточно для моделей со скрытым
-            # рассуждением: они могут исчерпать весь предел до появления
-            # видимого `content`. 128 остаётся дешёвой проверкой, но позволяет
-            # таким моделям вернуть короткий итоговый ответ.
             max_tokens=128,
             timeout_seconds=timeout_seconds,
         )
@@ -250,9 +375,6 @@ class LocalModelActionDriver:
         return compact
 
     def next_action(self, context: DriverContext) -> AgentAction:
-        # The registry is the single policy source.  Besides names, the model
-        # receives the bounded argument schemas introduced by C-10, so it can
-        # call generic workspace tools without inventing their parameters.
         available_tools = [tool.as_payload() for tool in context.available_tools]
         allowed = sorted(
             {tool.name for tool in context.available_tools} | RESERVED_ACTIONS
@@ -290,14 +412,12 @@ class LocalModelActionDriver:
                     "content": json.dumps(state, ensure_ascii=False, separators=(",", ":")),
                 },
             ),
-            # Оставляем секунду ядру на запись результата и проверку. Если
-            # общего остатка нет (например, в отдельном модульном тесте),
-            # действует обычное ограничение клиента.
             timeout_seconds=(
                 max(0.1, context.remaining_seconds - 1.0)
                 if context.remaining_seconds is not None
                 else None
             ),
+            json_object=True,
         )
         payload = _extract_json_object(response)
         name = payload.get("name")
