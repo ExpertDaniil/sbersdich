@@ -69,8 +69,12 @@ def _pytest_arguments(command: str, root: Path) -> tuple[str, ...]:
     return (project_python(root), "-m", "pytest", *normalized)
 
 
+def _has_python_tests(root: Path, directory: Path) -> bool:
+    return any(directory.glob("**/test_*.py")) or any(directory.glob("**/*_test.py"))
+
+
 def discover_project_checks(instruction: str, workdir: Path) -> ProjectCheckPlan:
-    """Support explicit pytest commands and ordinary Python tests/ discovery.
+    """Support explicit pytest commands and ordinary Python test discovery.
 
     This is deliberately not a shell interpreter. Unknown pytest options block
     completion with a diagnostic instead of silently dropping a required check.
@@ -89,7 +93,6 @@ def discover_project_checks(instruction: str, workdir: Path) -> ProjectCheckPlan
         sources: list[str] = []
         seen: set[tuple[str, ...]] = set()
         for source, text in documents:
-            # Inline code, fenced-command lines, and plain command-only lines.
             candidates = re.findall(r"`([^`\r\n]+)`", text)
             candidates.extend(line.strip() for line in text.splitlines())
             for candidate in candidates:
@@ -103,12 +106,14 @@ def discover_project_checks(instruction: str, workdir: Path) -> ProjectCheckPlan
                 seen.add(argv)
                 sources.append(source)
                 commands.append(CommandSpec(f"project-tests-{len(commands) + 1}", argv))
-        if not commands and (root / "tests").is_dir():
-            # A tests/ directory alone may belong to another language.
-            python_tests = any((root / "tests").glob("**/test_*.py")) or any((root / "tests").glob("**/*_test.py"))
-            if python_tests:
-                commands.append(CommandSpec("project-tests-1", _pytest_arguments("pytest tests/", root)))
-                sources.append("Python tests/ discovery")
+        if not commands and (root / "tests").is_dir() and _has_python_tests(root, root / "tests"):
+            commands.append(CommandSpec("project-tests-1", _pytest_arguments("pytest tests/", root)))
+            sources.append("Python tests/ discovery")
+        if not commands:
+            root_tests = list(root.glob("test_*.py")) + list(root.glob("*_test.py"))
+            if any(path.is_file() and not path.is_symlink() for path in root_tests):
+                commands.append(CommandSpec("project-tests-1", _pytest_arguments("pytest .", root)))
+                sources.append("Python root-test discovery")
         return ProjectCheckPlan(tuple(commands), tuple(sources))
     except (OSError, UnicodeError, ValueError) as error:
         return ProjectCheckPlan(error=str(error))
