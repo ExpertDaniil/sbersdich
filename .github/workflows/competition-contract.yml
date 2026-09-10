@@ -86,23 +86,16 @@ jobs:
           print('audit report generated')
           PY
 
-      - name: Public fix-login task through upload entrypoint
+      # The two public fix tasks require their FastAPI/PostgreSQL runtime for
+      # C15's mandatory project-test gate. Running them in this bare host smoke
+      # would create a false failure (or, worse, tempt us to bypass validation).
+      # security-c16.yml is the authoritative end-to-end run for both fixes and
+      # all six original organizer verifiers inside prepared task images.
+      - name: Confirm fix tasks are delegated to authoritative C16 runtime
         run: |
-          rm -rf /app/*
-          cp -a /tmp/public/local_task/fix-sqli-login/environment/app/. /app/
-          cd /tmp/local-agent
-          ./run.sh "$(cat /tmp/public/local_task/fix-sqli-login/instruction.md)" | tee /tmp/fix-login-agent.json
-          grep -q '"status": "succeeded"' /tmp/fix-login-agent.json
-          python3 -m py_compile /app/routers/auth.py
-
-      - name: Public fix-search task through upload entrypoint
-        run: |
-          rm -rf /app/*
-          cp -a /tmp/public/local_task/fix-sqli-search/environment/app/. /app/
-          cd /tmp/local-agent
-          ./run.sh "$(cat /tmp/public/local_task/fix-sqli-search/instruction.md)" | tee /tmp/fix-search-agent.json
-          grep -q '"status": "succeeded"' /tmp/fix-search-agent.json
-          python3 -m py_compile /app/routers/items.py
+          test -f .github/workflows/security-c16.yml
+          grep -q 'Run all six original verifiers' .github/workflows/security-c16.yml
+          echo 'public fix E2E validation is owned by security-c16-official-public'
 
       - name: Public forensics task through upload entrypoint
         run: |
