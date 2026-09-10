@@ -79,6 +79,8 @@ class OpenAICompatibleClientTests(unittest.TestCase):
         self.assertEqual(captured["url"], "http://model.internal/v1/chat/completions")
         self.assertGreater(captured["timeout"], 0)
         self.assertLessEqual(captured["timeout"], 3)
+        request = json.loads(bytes(captured["body"]).decode("utf-8"))
+        self.assertEqual(request["max_tokens"], 128)
         self.assertEqual(client.usage.as_payload()["total_tokens"], 8)
         self.assertNotIn(
             "super-secret-test-key",

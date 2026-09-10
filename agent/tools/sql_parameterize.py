@@ -105,7 +105,14 @@ def vulnerable_comment_edit(source: str, node: ast.AST) -> SourceEdit | None:
     if not re.search(r"#.*\bVULNERABLE\b.*(?:SQL|f-string)", previous, re.IGNORECASE):
         return None
     indentation = previous[: len(previous) - len(previous.lstrip(" \t"))]
-    newline = "\n" if previous.endswith(("\n", "\r")) else ""
+    if previous.endswith("\r\n"):
+        newline = "\r\n"
+    elif previous.endswith("\n"):
+        newline = "\n"
+    elif previous.endswith("\r"):
+        newline = "\r"
+    else:
+        newline = ""
     start = sum(len(item) for item in lines[:previous_index])
     end = start + len(previous)
     return SourceEdit(
@@ -287,7 +294,12 @@ def parameterize_project(
     all_changes: list[FixChange] = []
     for path in iter_python_files(root, include_tests=False):
         try:
-            source = path.read_text(encoding="utf-8")
+            # Path.read_text() включает универсальную обработку переводов строк
+            # и на Windows незаметно превращает CRLF в LF. Читаем с newline="",
+            # чтобы точечное исправление не переписывало весь файл и совпадало
+            # с политикой сохранения окончаний строк в workspace patch.
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                source = handle.read()
         except (OSError, UnicodeDecodeError) as error:
             raise FixError(f"cannot read {path}: {error}") from error
         updated, changes = parameterize_source(source, path.relative_to(base))

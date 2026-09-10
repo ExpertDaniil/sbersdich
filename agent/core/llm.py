@@ -189,7 +189,11 @@ class OpenAICompatibleClient:
                 {"role": "system", "content": "Reply with only OK."},
                 {"role": "user", "content": "Connection check"},
             ),
-            max_tokens=4,
+            # Четырёх токенов недостаточно для моделей со скрытым
+            # рассуждением: они могут исчерпать весь предел до появления
+            # видимого `content`. 128 остаётся дешёвой проверкой, но позволяет
+            # таким моделям вернуть короткий итоговый ответ.
+            max_tokens=128,
             timeout_seconds=timeout_seconds,
         )
 

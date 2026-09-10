@@ -18,7 +18,10 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from agent.strategies import classify_instruction  # noqa: E402
 from agent.tools.security_scan import render_report, scan_python_source  # noqa: E402
-from agent.tools.sql_parameterize import parameterize_source  # noqa: E402
+from agent.tools.sql_parameterize import (  # noqa: E402
+    parameterize_project,
+    parameterize_source,
+)
 
 
 VULNERABLE_LOGIN = '''
@@ -105,6 +108,24 @@ async def outer(conn):
 
 
 class SqlParameterizerTests(unittest.TestCase):
+    def test_project_apply_preserves_crlf_line_endings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_file = root / "auth.py"
+            original = VULNERABLE_LOGIN.replace("\n", "\r\n").encode("utf-8")
+            source_file.write_bytes(original)
+
+            changes = parameterize_project(root, apply=True)
+            updated = source_file.read_bytes()
+
+        self.assertEqual(len(changes), 1)
+        self.assertIn(b"\r\n", updated)
+        self.assertNotIn(b"\n", updated.replace(b"\r\n", b""))
+        self.assertEqual(
+            scan_python_source(updated.decode("utf-8"), "auth.py"),
+            [],
+        )
+
     def test_login_query_is_parameterized_and_payload_stays_data(self):
         updated, changes = parameterize_source(VULNERABLE_LOGIN, "auth.py")
         self.assertEqual(len(changes), 1)
