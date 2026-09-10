@@ -20,6 +20,31 @@ FORBIDDEN_MODEL_OWNED_EVIDENCE_KEYS = frozenset(
 )
 
 
+def _raw_json_object_at_or_after(text: str, start: int = 0) -> tuple[dict[str, Any], int, int] | None:
+    """Return the first decodable JSON object embedded in *text*.
+
+    Small local/reasoning models sometimes wrap an otherwise valid action in a
+    short preamble or a thinking tag even when instructed to emit JSON only.
+    We tolerate that presentation noise, but still require exactly one JSON
+    object so that two competing actions can never be executed ambiguously.
+    """
+
+    decoder = json.JSONDecoder()
+    cursor = max(0, start)
+    while True:
+        object_start = text.find("{", cursor)
+        if object_start < 0:
+            return None
+        try:
+            payload, object_end = decoder.raw_decode(text, object_start)
+        except json.JSONDecodeError:
+            cursor = object_start + 1
+            continue
+        if isinstance(payload, dict):
+            return payload, object_start, object_end
+        cursor = object_start + 1
+
+
 def _extract_json_object(text: str) -> dict[str, Any]:
     stripped = text.strip()
     if stripped.startswith("```"):
@@ -28,10 +53,17 @@ def _extract_json_object(text: str) -> dict[str, Any]:
             stripped = "\n".join(lines[1:-1])
             if stripped.lstrip().lower().startswith("json\n"):
                 stripped = stripped.lstrip()[5:]
+
     try:
         payload = json.loads(stripped)
-    except json.JSONDecodeError as error:
-        raise ModelRequestError("scaffold planner expected one JSON object") from error
+    except json.JSONDecodeError:
+        embedded = _raw_json_object_at_or_after(stripped)
+        if embedded is None:
+            raise ModelRequestError("scaffold planner expected one JSON object")
+        payload, _object_start, object_end = embedded
+        if _raw_json_object_at_or_after(stripped, object_end) is not None:
+            raise ModelRequestError("scaffold planner returned multiple JSON objects")
+
     if not isinstance(payload, dict):
         raise ModelRequestError("scaffold planner response must be an object")
     return payload
