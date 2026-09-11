@@ -34,6 +34,25 @@ class ScaffoldKernelError(RuntimeError):
     pass
 
 
+def _confirmed_model_mutation(action: AgentAction, result) -> bool:
+    """Return true only for mutation tools whose result proves a real write.
+
+    ToolSpec.mutates_workspace means a tool *may* mutate. Some tools are conditional
+    (for example security_scan can optionally write a report), so using the catalog
+    flag alone can accidentally trigger final validation after a read-only action.
+    Auto-finalization is intentionally limited to the two transactional model-facing
+    mutation paths that return explicit write evidence.
+    """
+
+    if not result.ok:
+        return False
+    if action.name == "checked_edit":
+        return result.data.get("written") is True
+    if action.name == "arena_promote":
+        return result.data.get("promoted") is True
+    return False
+
+
 class AgentKernel:
     """Scientific-search loop: hypothesize -> probe -> observe -> verify/backtrack."""
 
@@ -137,7 +156,6 @@ class AgentKernel:
             )
             tools = self.tool_bus.catalog(execution_context)
             allowed = {tool.name for tool in tools} | RESERVED_ACTIONS
-            mutating_tools = {tool.name for tool in tools if tool.mutates_workspace}
 
             while True:
                 elapsed = self.clock() - started
@@ -269,16 +287,14 @@ class AgentKernel:
                 result = self.tool_bus.execute(action, execution_context)
                 state.record_tool_event(steps, action, result)
 
-                # Model-driven fix mutations get an automatic deterministic proof.
-                # This removes the wasteful edit -> model -> pytest -> model -> finish
-                # tail while preserving the same hard verifier. Deterministic fast-path
-                # mutations are excluded so the public SQL recipe can still perform its
-                # required post-rewrite scan before final validation.
+                # A transactional model edit gets its deterministic proof immediately.
+                # This removes edit -> model -> pytest -> model -> finish on the happy path.
+                # Conditional tools are not auto-finalized merely because their catalog says
+                # they may mutate; the ToolResult must explicitly prove a source write.
                 project_checks = contract.project_checks
                 should_auto_verify = (
                     decision.mode == "fix"
-                    and result.ok
-                    and action.name in mutating_tools
+                    and _confirmed_model_mutation(action, result)
                     and plan.strategy.value != "deterministic"
                     and project_checks is not None
                     and bool(project_checks.commands)
