@@ -8,7 +8,7 @@ from pathlib import Path
 from agent.core.llm import ModelUsage
 
 from .candidate_arena import CandidateArenaProvider
-from .context_compiler import RepositoryContextCompiler
+from .context_compiler import CompiledSemanticCyberACIProvider, RepositoryContextCompiler
 from .contracts import KernelLimits, ScaffoldRunResult
 from .extensions import ScaffoldExtension
 from .kernel import AgentKernel
@@ -16,7 +16,6 @@ from .planner import HybridPlanner
 from .providers import LegacySecurityProvider, WorkspaceFileProvider
 from .registry import ToolBus
 from .security_relevance import SecurityAwareRepositoryDistillerProvider
-from .semantic_namespace import SemanticCyberACIProvider
 from .verifier import LegacyTaskVerifier
 
 
@@ -50,7 +49,7 @@ def build_default_application(
     )
     providers = [
         distiller_provider,
-        SemanticCyberACIProvider(
+        CompiledSemanticCyberACIProvider(
             workdir,
             distiller=distiller_provider.distiller,
             semantic_context=semantic_context,
