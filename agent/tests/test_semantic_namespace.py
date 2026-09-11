@@ -5,8 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.core.models import AgentAction
-from agent.scaffold.contracts import ExecutionContext, KernelLimits, PlanDecision
+from agent.core.models import AgentAction, ValidationFeedback
+from agent.scaffold.contracts import (
+    ExecutionContext,
+    KernelLimits,
+    PlanDecision,
+    VerificationResult,
+)
 from agent.scaffold.kernel import AgentKernel
 from agent.scaffold.providers import LegacySecurityProvider
 from agent.scaffold.registry import ToolBus
@@ -15,7 +20,6 @@ from agent.scaffold.semantic_namespace import (
     SemanticCyberACIProvider,
     SemanticRepositoryContext,
 )
-from agent.scaffold.verifier import LegacyTaskVerifier
 from agent.strategies import classify_instruction
 
 
@@ -33,6 +37,29 @@ class ScriptPlanner:
         if not self.plans:
             return PlanDecision(AgentAction("abort", rationale="script exhausted"))
         return self.plans.pop(0)
+
+
+class _PassingReport:
+    passed = True
+
+    @staticmethod
+    def as_payload():
+        return {"passed": True, "checks": [], "changes": {"modified": ["access.py"]}}
+
+
+class PassingVerifier:
+    def __init__(self):
+        self.calls = 0
+
+    def verify(self, context):
+        self.calls += 1
+        feedback = ValidationFeedback(True, "fake verification passed", _PassingReport())
+        return VerificationResult(
+            True,
+            "fake verification passed",
+            feedback,
+            {"changed_paths": ["access.py"]},
+        )
 
 
 class SemanticNamespaceTests(unittest.TestCase):
@@ -119,7 +146,7 @@ class SemanticNamespaceTests(unittest.TestCase):
             self.assertEqual(edited.data["path"], card.semantic_path)
             self.assertEqual(
                 (root / "access.py").read_text(encoding="utf-8"),
-                'def can_delete(user):\n    return user.get("role") == "admin"\n',
+                'def can_delete(user):\n    return user.get("role") == "admin"',
             )
 
     def test_non_git_workspace_does_not_advertise_git_checks(self):
@@ -157,6 +184,8 @@ class SemanticNamespaceTests(unittest.TestCase):
                 semantic_context=semantic,
             )
             sha = hashlib.sha256((root / "access.py").read_bytes()).hexdigest()
+            card = semantic.card_for("access.py")
+            assert card is not None
             planner = ScriptPlanner(
                 [
                     PlanDecision(
@@ -170,7 +199,7 @@ class SemanticNamespaceTests(unittest.TestCase):
                         AgentAction(
                             "checked_edit",
                             {
-                                "path": semantic.card_for("access.py").handle,  # type: ignore[union-attr]
+                                "path": card.handle,
                                 "start_line": 2,
                                 "end_line": 2,
                                 "replacement": '    return user.get("role") == "admin"',
@@ -184,11 +213,12 @@ class SemanticNamespaceTests(unittest.TestCase):
                     ),
                 ]
             )
+            verifier = PassingVerifier()
             kernel = AgentKernel(
                 workdir=root,
                 tool_bus=ToolBus((provider, LegacySecurityProvider(root))),
                 planner=planner,
-                verifier=LegacyTaskVerifier(),
+                verifier=verifier,
                 limits=KernelLimits(deadline_seconds=20),
                 repository_context=semantic,
             )
@@ -196,13 +226,14 @@ class SemanticNamespaceTests(unittest.TestCase):
             result = kernel.run(AUTH_BUG_INSTRUCTION)
 
             self.assertTrue(result.succeeded, result.reason)
+            self.assertEqual(verifier.calls, 1)
             self.assertEqual(result.validations_used, 1)
             self.assertEqual(len(planner.plans), 0)
             self.assertEqual(result.events[-1].action.name, "finish")
             self.assertIn("automatic deterministic validation", result.events[-1].action.rationale)
             self.assertEqual(
                 (root / "access.py").read_text(encoding="utf-8"),
-                'def can_delete(user):\n    return user.get("role") == "admin"\n',
+                'def can_delete(user):\n    return user.get("role") == "admin"',
             )
 
 
