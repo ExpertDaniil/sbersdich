@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from agent.core.contracts import build_task_contract
 from agent.core.models import AgentAction
@@ -26,6 +26,9 @@ from .interfaces import Planner, Verifier
 from .registry import RESERVED_ACTIONS, ToolBus
 from .state import AgentState
 
+if TYPE_CHECKING:
+    from .semantic_namespace import SemanticRepositoryContext
+
 
 class ScaffoldKernelError(RuntimeError):
     pass
@@ -45,6 +48,7 @@ class AgentKernel:
         extension_guidance: str = "",
         clock: Callable[[], float] = time.monotonic,
         hypothesis_controller: RuntimeHypothesisController | None = None,
+        repository_context: SemanticRepositoryContext | None = None,
     ):
         self.workdir = canonical_path(workdir)
         self.tool_bus = tool_bus
@@ -54,6 +58,7 @@ class AgentKernel:
         self.extension_guidance = extension_guidance
         self.clock = clock
         self.hypothesis_controller = hypothesis_controller or RuntimeHypothesisController()
+        self.repository_context = repository_context
 
     def _result(
         self,
@@ -76,6 +81,29 @@ class AgentKernel:
             events=tuple(state.events),
             final_validation=final_validation,
             state=state.snapshot(tuple(tools)),
+        )
+
+    def _verify(
+        self,
+        *,
+        decision: StrategyDecision,
+        contract,
+        baseline,
+        state: AgentState,
+        started: float,
+    ) -> VerificationResult:
+        return self.verifier.verify(
+            VerificationContext(
+                workdir=self.workdir,
+                decision=decision,
+                contract=contract,
+                baseline=baseline,
+                events=tuple(state.events),
+                remaining_seconds=max(
+                    0.0,
+                    self.limits.deadline_seconds - (self.clock() - started),
+                ),
+            )
         )
 
     def run(self, instruction: str) -> ScaffoldRunResult:
@@ -109,6 +137,7 @@ class AgentKernel:
             )
             tools = self.tool_bus.catalog(execution_context)
             allowed = {tool.name for tool in tools} | RESERVED_ACTIONS
+            mutating_tools = {tool.name for tool in tools if tool.mutates_workspace}
 
             while True:
                 elapsed = self.clock() - started
@@ -119,6 +148,11 @@ class AgentKernel:
 
                 remaining = max(0.0, self.limits.deadline_seconds - elapsed)
                 snapshot = state.snapshot(tools)
+                repository_guide = (
+                    self.repository_context.task_guide(instruction)
+                    if self.repository_context is not None
+                    else ""
+                )
                 planning_context = PlanningContext(
                     instruction=instruction,
                     workdir=self.workdir,
@@ -132,6 +166,7 @@ class AgentKernel:
                     last_validation=last_validation,
                     remaining_seconds=remaining,
                     extension_guidance=self.extension_guidance,
+                    repository_guide=repository_guide,
                 )
                 plan = self.planner.next_plan(planning_context)
                 action = plan.action
@@ -201,15 +236,12 @@ class AgentKernel:
                     if validations >= self.limits.max_validations:
                         raise ScaffoldKernelError("validation-attempt budget exhausted")
                     validations += 1
-                    final_verification = self.verifier.verify(
-                        VerificationContext(
-                            workdir=self.workdir,
-                            decision=decision,
-                            contract=contract,
-                            baseline=baseline,
-                            events=tuple(state.events),
-                            remaining_seconds=max(0.0, self.limits.deadline_seconds - (self.clock() - started)),
-                        )
+                    final_verification = self._verify(
+                        decision=decision,
+                        contract=contract,
+                        baseline=baseline,
+                        state=state,
+                        started=started,
                     )
                     if final_verification.feedback is None:
                         raise ScaffoldKernelError(
@@ -236,6 +268,59 @@ class AgentKernel:
 
                 result = self.tool_bus.execute(action, execution_context)
                 state.record_tool_event(steps, action, result)
+
+                # Model-driven fix mutations get an automatic deterministic proof.
+                # This removes the wasteful edit -> model -> pytest -> model -> finish
+                # tail while preserving the same hard verifier. Deterministic fast-path
+                # mutations are excluded so the public SQL recipe can still perform its
+                # required post-rewrite scan before final validation.
+                project_checks = contract.project_checks
+                should_auto_verify = (
+                    decision.mode == "fix"
+                    and result.ok
+                    and action.name in mutating_tools
+                    and plan.strategy.value != "deterministic"
+                    and project_checks is not None
+                    and bool(project_checks.commands)
+                )
+                if should_auto_verify:
+                    if validations >= self.limits.max_validations:
+                        raise ScaffoldKernelError("validation-attempt budget exhausted")
+                    validations += 1
+                    final_verification = self._verify(
+                        decision=decision,
+                        contract=contract,
+                        baseline=baseline,
+                        state=state,
+                        started=started,
+                    )
+                    if final_verification.feedback is None:
+                        raise ScaffoldKernelError(
+                            "verifier must return ValidationFeedback for scaffold accounting"
+                        )
+                    last_validation = final_verification.feedback
+                    auto_finish = AgentAction(
+                        "finish",
+                        rationale="automatic deterministic validation after successful model-driven mutation",
+                    )
+                    if steps < self.limits.max_steps:
+                        steps += 1
+                    state.record_validation_event(steps, auto_finish, last_validation)
+                    if final_verification.passed:
+                        return self._result(
+                            status="succeeded",
+                            reason=final_verification.reason,
+                            decision=decision,
+                            steps=steps,
+                            validations=validations,
+                            state=state,
+                            tools=tools,
+                            final_validation=final_verification,
+                        )
+                    if validations >= self.limits.max_validations:
+                        raise ScaffoldKernelError(
+                            f"validation failed: {final_verification.reason}"
+                        )
         except (OSError, UnicodeError, ValueError, RuntimeError) as error:
             return self._result(
                 status="failed",
