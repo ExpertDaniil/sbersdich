@@ -8,6 +8,7 @@ from pathlib import Path
 from agent.core.llm import ModelUsage
 
 from .candidate_arena import CandidateArenaProvider
+from .context_compiler import RepositoryContextCompiler
 from .contracts import KernelLimits, ScaffoldRunResult
 from .extensions import ScaffoldExtension
 from .kernel import AgentKernel
@@ -15,7 +16,7 @@ from .planner import HybridPlanner
 from .providers import LegacySecurityProvider, WorkspaceFileProvider
 from .registry import ToolBus
 from .security_relevance import SecurityAwareRepositoryDistillerProvider
-from .semantic_namespace import SemanticCyberACIProvider, SemanticRepositoryContext
+from .semantic_namespace import SemanticCyberACIProvider
 from .verifier import LegacyTaskVerifier
 
 
@@ -38,12 +39,12 @@ def build_default_application(
     limits: KernelLimits | None = None,
     extensions: tuple[ScaffoldExtension, ...] = (),
 ) -> ScaffoldApplication:
-    # Distiller, semantic namespace and ACI share one cached structural index.
+    # Distiller, semantic namespace, context compiler and ACI share one cached index.
     # The task workspace itself is never renamed: only the model-facing names change.
-    # Candidate Arena is separate because it owns private transactional copies and can
-    # only promote a deterministic winner.
+    # Candidate Arena stays separate because it owns private transactional copies and
+    # can only promote a deterministic winner.
     distiller_provider = SecurityAwareRepositoryDistillerProvider(workdir)
-    semantic_context = SemanticRepositoryContext(
+    semantic_context = RepositoryContextCompiler(
         workdir,
         distiller=distiller_provider.distiller,
     )
