@@ -1,11 +1,11 @@
 """Task-conditioned repository context compiler for the model-facing interface.
 
-The task workspace is never renamed.  The model receives three bounded levels of
+The task workspace is never renamed. The model receives three bounded levels of
 context in one locally-derived packet:
 
 L0 semantic filename/handle -> L1 compact REPO_GUIDE -> L2 trusted source window.
 
-The module also adds typed pytest summaries to the semantic ACI.  This independently
+The module also adds typed pytest summaries to the semantic ACI. This independently
 adopts the useful *idea* of structured test feedback used by other competition agents,
 without importing their implementation: the planner sees failed node ids and error
 classes before raw process noise.
@@ -27,19 +27,16 @@ from .semantic_namespace import (
 )
 
 
-MAX_CONTEXT_PACKET_CHARS = 10_000
+MAX_CONTEXT_PACKET_CHARS = 6_000
+MAX_BASE_GUIDE_CHARS = 2_200
 MAX_SOURCE_FILES = 3
 MAX_SOURCE_LINES = 64
-MAX_SINGLE_SOURCE_CHARS = 3_600
+MAX_SINGLE_SOURCE_CHARS = 1_800
 MAX_TYPED_FAILURES = 8
 MAX_ERROR_TYPES = 6
 
 _FAILED_RE = re.compile(r"^FAILED\s+([^\s]+)", re.MULTILINE)
 _ERROR_RE = re.compile(r"\b([A-Z][A-Za-z0-9_]*(?:Error|Exception))\b")
-_SUMMARY_RE = re.compile(
-    r"(?:(\d+)\s+failed)?(?:,?\s*(\d+)\s+passed)?(?:,?\s*(\d+)\s+errors?)?",
-    re.IGNORECASE,
-)
 
 
 def _query_terms(text: str) -> tuple[str, ...]:
@@ -107,8 +104,6 @@ def _pytest_feedback(output: str, *, passed: bool) -> dict[str, Any]:
             break
 
     counts = {"failed": 0, "passed": 0, "errors": 0}
-    # Pytest's final summary is near the end; scan simple count tokens there rather
-    # than depending on one exact version-specific line shape.
     tail = output[-1200:]
     for key, pattern in (
         ("failed", r"(\d+)\s+failed"),
@@ -131,7 +126,10 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
     """Compile semantic names, contracts and a few trusted source windows."""
 
     def task_guide(self, instruction: str) -> str:
-        guide = super().task_guide(instruction)
+        raw_guide = super().task_guide(instruction)
+        guide = raw_guide[:MAX_BASE_GUIDE_CHARS]
+        if len(raw_guide) > MAX_BASE_GUIDE_CHARS:
+            guide += "\n... semantic index truncated; use search_surface for lower-ranked files ..."
         snapshot = self.distiller.snapshot()
         selected_paths: list[str] = []
         try:
@@ -149,7 +147,6 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
         except (OSError, UnicodeError, ValueError, RuntimeError):
             selected_paths = []
 
-        # Structural fallback: a useful packet is preferable to another model call.
         if not selected_paths:
             for item in snapshot.files:
                 if item.text is None or _is_test_path(item.path) or not item.symbols:
@@ -162,9 +159,8 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
         if selected_paths:
             sections.append(
                 "\n# TRUSTED_SOURCE_WINDOWS\n"
-                "These windows are direct runtime reads, not summaries. Their full SHA256 may be "
-                "used directly as checked_edit.expected_sha256; view_window is unnecessary when "
-                "the required edit is fully visible and unambiguous."
+                "Direct runtime reads, not summaries. Full SHA256 is a valid checked_edit guard; "
+                "skip view_window when the needed edit is fully visible and unambiguous."
             )
         for path in selected_paths:
             item = snapshot.by_path[path]
@@ -192,8 +188,7 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
                 sections.append("\n... trusted source packet truncated ...")
                 break
             sections.append(section)
-        packet = "".join(sections)
-        return packet[:MAX_CONTEXT_PACKET_CHARS]
+        return "".join(sections)[:MAX_CONTEXT_PACKET_CHARS]
 
 
 class CompiledSemanticCyberACIProvider(SemanticCyberACIProvider):
