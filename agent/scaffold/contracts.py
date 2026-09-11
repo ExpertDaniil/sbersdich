@@ -80,6 +80,7 @@ class PlanningContext:
     last_validation: ValidationFeedback | None
     remaining_seconds: float
     extension_guidance: str = ""
+    repository_guide: str = ""
 
 
 @dataclass(frozen=True)
