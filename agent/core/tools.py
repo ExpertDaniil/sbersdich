@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent.strategies import StrategyDecision
+from agent.tools.binary_records import carve_records
 from agent.tools.ctf import transform_ctf_bytes, transform_ctf_data
 from agent.tools.forensics import (
     analyze_incident,
@@ -28,6 +29,7 @@ from agent.validators import (
 from .contracts import ContractError, map_instruction_path
 from .models import AgentAction, ToolDefinition, ToolResult
 from .workspace import (
+    _read_regular_bytes,
     apply_workspace_patch,
     list_workspace_files,
     read_workspace_bytes,
@@ -46,7 +48,7 @@ MODE_ACTIONS = {
     "audit": READ_ACTIONS | {"security_scan"},
     "fix": READ_ACTIONS | WRITE_ACTIONS | {"security_scan", "sql_parameterize"},
     "forensics": READ_ACTIONS | {"forensics_analyze"},
-    "ctf": READ_ACTIONS | {"ctf_transform", "write_exact_text"},
+    "ctf": READ_ACTIONS | {"binary_records", "ctf_transform", "write_exact_text"},
     "general": READ_ACTIONS | WRITE_ACTIONS | {"write_exact_text"},
 }
 TOOL_ORDER = (
@@ -57,6 +59,7 @@ TOOL_ORDER = (
     "security_scan",
     "sql_parameterize",
     "forensics_analyze",
+    "binary_records",
     "ctf_transform",
     "write_exact_text",
     "apply_patch",
@@ -105,6 +108,14 @@ TOOL_DEFINITIONS = {
         "Correlate the supported incident evidence profile.",
         {"target": "string=.", "output": "string=incident_report.txt"},
         True,
+    ),
+    "binary_records": ToolDefinition(
+        "binary_records",
+        "Locate binary records using the documented magic and integer header. Read format documentation first. Returns exact payload offsets/lengths and all header values; select the configured kind yourself.",
+        {"path": "string", "magic_hex": "hex string; 1..64 bytes",
+         "header_format": "struct format AFTER magic: < or > or ! then 1..16 integer fields bBhHiIqQ; e.g. >BH = big-endian uint8,uint16",
+         "length_field": "integer; zero-based header field containing payload byte count",
+         "max_records": "integer=32; max 64"},
     ),
     "ctf_transform": ToolDefinition(
         "ctf_transform",
@@ -168,6 +179,7 @@ class SecurityToolRegistry:
             "security_scan": self._security_scan,
             "sql_parameterize": self._sql_parameterize,
             "forensics_analyze": self._forensics_analyze,
+            "binary_records": self._binary_records,
             "ctf_transform": self._ctf_transform,
             "write_exact_text": self._write_exact_text,
             "apply_patch": self._apply_patch,
@@ -375,6 +387,16 @@ class SecurityToolRegistry:
             f"wrote exact UTF-8 content to {relative}",
             {"path": str(output), "characters": len(content)},
         )
+
+    def _binary_records(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(arguments, {"path", "magic_hex", "header_format", "length_field", "max_records"}, "binary_records")
+        required = {"path", "magic_hex", "header_format", "length_field"}
+        if not required <= arguments.keys():
+            raise ToolPolicyError("binary_records requires path, magic_hex, header_format, length_field")
+        path, raw = _read_regular_bytes(self.workdir, arguments["path"])
+        data = carve_records(raw, **{key: value for key, value in arguments.items() if key != "path"})
+        data["path"] = path.relative_to(self.workdir).as_posix()
+        return ToolResult(True, f"located {data['count']} candidate record(s); check valid and configured header fields", data)
 
     def _ctf_transform(self, arguments: dict[str, Any]) -> ToolResult:
         self._only(arguments, {"value", "steps", "path", "offset", "length"}, "ctf_transform")

@@ -151,6 +151,8 @@ class AgentKernel:
             decision = classify_instruction(instruction)
             state = AgentState(instruction, decision.mode)
             contract = build_task_contract(decision, instruction, self.workdir)
+            if self.repository_context is not None:
+                self.repository_context.set_output_paths(tuple(rule.path for rule in contract.artifacts))
             task_playbook = load_playbook(decision.playbook)
             validation_playbook = load_validation_playbook()
             execution_context = ExecutionContext(

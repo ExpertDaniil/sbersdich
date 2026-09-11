@@ -212,6 +212,7 @@ class CtfRegistryAndLoopTests(unittest.TestCase):
                 "read_file",
                 "read_bytes",
                 "search_text",
+                "binary_records",
                 "ctf_transform",
                 "write_exact_text",
             },

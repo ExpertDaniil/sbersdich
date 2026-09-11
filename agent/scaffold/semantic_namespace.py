@@ -271,8 +271,12 @@ def _kind_for(item: IndexedFile) -> str:
     suffix = Path(item.path).suffix.casefold()
     if name in _CONFIG_NAMES or suffix in {".toml", ".ini", ".cfg", ".yaml", ".yml"}:
         return "config"
-    if suffix in {".json", ".xml", ".sql"} and not item.symbols:
+    if suffix in {".json", ".xml"} and not item.symbols:
+        return "data"
+    if suffix == ".sql" and not item.symbols:
         return "schema"
+    if suffix in {".md", ".rst", ".txt"}:
+        return "document"
     if suffix in {".sh", ".ps1"}:
         return "script"
     return "impl"
@@ -318,10 +322,19 @@ class SemanticRepositoryContext:
         self.workdir = Path(workdir).resolve()
         self.distiller = distiller
         self._signature = ""
+        self._output_paths: set[str] = set()
+        self._stable_handles: dict[str, str] = {}
         self._cards: tuple[SemanticFileCard, ...] = ()
         self._by_real: dict[str, SemanticFileCard] = {}
         self._by_alias: dict[str, SemanticFileCard] = {}
         self._by_handle: dict[str, SemanticFileCard] = {}
+
+    def set_output_paths(self, paths: tuple[Path, ...]) -> None:
+        self._output_paths = {path.resolve().relative_to(self.workdir).as_posix() for path in paths}
+        self._signature = ""
+
+    def is_task_output(self, path: str) -> bool:
+        return path in self._output_paths
 
     def _refresh(self) -> None:
         snapshot = self.distiller.snapshot()
@@ -332,7 +345,9 @@ class SemanticRepositoryContext:
         used_aliases: set[str] = set()
         for index, item in enumerate(sorted(snapshot.files, key=lambda entry: entry.path), 1):
             domain = _domain_for(item)
-            kind = _kind_for(item)
+            kind = "candidate_output" if self.is_task_output(item.path) else _kind_for(item)
+            if item.path not in self._stable_handles:
+                self._stable_handles[item.path] = f"F{len(self._stable_handles) + 1:03d}"
             purpose = _purpose_for(item)
             suffix = Path(item.path).suffix.casefold()
             alias = _bounded_alias(f"{domain}__{purpose}__{kind}", suffix, salt=item.path)
@@ -351,7 +366,7 @@ class SemanticRepositoryContext:
             )
             draft.append(
                 SemanticFileCard(
-                    handle=f"F{index:03d}",
+                    handle=self._stable_handles[item.path],
                     real_path=item.path,
                     semantic_path=alias,
                     role=f"{domain}-{kind}",
@@ -441,7 +456,7 @@ class SemanticRepositoryContext:
         seen: set[str] = set()
         for real_path in selected_real:
             card = self._by_real.get(real_path)
-            if card is None or card.real_path in seen:
+            if card is None or card.real_path in seen or self.is_task_output(card.real_path):
                 continue
             selected.append(card)
             seen.add(card.real_path)
@@ -463,6 +478,7 @@ class SemanticRepositoryContext:
             fields = [
                 f"{card.handle} {card.semantic_path}",
                 f"ROLE={card.role}",
+                f"source_path={card.real_path}",
             ]
             if card.symbols:
                 fields.append("DEF=" + ",".join(card.symbols[:MAX_CARD_SYMBOLS]))
@@ -534,6 +550,9 @@ class SemanticCyberACIProvider(CyberACIProvider):
     def _decorate_path(self, data: dict[str, Any], real_path: str) -> dict[str, Any]:
         payload = dict(data)
         payload["path"] = self.semantic_context.semantic_path(real_path)
+        payload["source_path"] = real_path
+        payload["provenance"] = ("task_output_candidate_not_evidence"
+                                 if self.semantic_context.is_task_output(real_path) else "workspace_read")
         handle = self.semantic_context.handle(real_path)
         if handle:
             payload["handle"] = handle
@@ -553,6 +572,9 @@ class SemanticCyberACIProvider(CyberACIProvider):
             real_path = str(item.get("path", ""))
             semantic = self.semantic_context.semantic_path(real_path)
             item["path"] = semantic
+            item["source_path"] = real_path
+            item["provenance"] = ("task_output_candidate_not_evidence"
+                                  if self.semantic_context.is_task_output(real_path) else "workspace_read")
             handle = self.semantic_context.handle(real_path)
             if handle:
                 item["handle"] = handle

@@ -32,8 +32,7 @@ class LegacyTaskVerifier:
             if context.decision.mode == "fix" else validate_task(policy)
         )
         if not report.passed:
-            reason = (failed_validation_reason(report) if context.decision.mode == "fix"
-                      else "deterministic validator reported failed checks")
+            reason = failed_validation_reason(report)
             feedback = ValidationFeedback(False, reason, report)
             return VerificationResult(False, reason, feedback)
 

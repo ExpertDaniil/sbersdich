@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.core.models import AgentAction, ToolResult
+from agent.core.contracts import map_instruction_path
 from agent.core.tools import SecurityToolRegistry
 from agent.core.workspace import resolve_workspace_path
 from agent.validators import canonical_path
@@ -54,6 +55,19 @@ class LegacySecurityProvider:
         )
 
     def execute(self, action: AgentAction, context: ExecutionContext) -> ToolResult:
+        # Legacy specialized writers must obey the same artifact boundary as write_file.
+        output = None
+        if context.decision.mode == "audit" and action.name == "security_scan" and action.arguments.get("write_report"):
+            output = action.arguments.get("output", "security_report.json")
+        elif context.decision.mode == "forensics" and action.name == "forensics_analyze":
+            output = action.arguments.get("output", "incident_report.txt")
+        if output is not None and context.artifact_paths:
+            try:
+                target = map_instruction_path(output, context.workdir)
+                if target not in {canonical_path(path) for path in context.artifact_paths}:
+                    raise ValueError("writer permits only declared artifact paths")
+            except (ValueError, RuntimeError, TypeError, AttributeError) as error:
+                return ToolResult(False, f"{action.name} failed: {error}")
         return self._registry.execute(action, context.decision)
 
 

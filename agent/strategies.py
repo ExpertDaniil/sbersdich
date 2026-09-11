@@ -28,14 +28,15 @@ def classify_instruction(instruction: str) -> StrategyDecision:
     no_modify = contains_any(
         normalized,
         (
-            r"\bdo not (?:modify|fix|change)\b",
-            r"\bwithout (?:modifying|fixing|changing)\b",
+            r"\bdo not (?:modify|fix|change)(?:\s+or\s+(?:modify|fix|change))?\s+(?:(?:the|any)\s+)?(?:anything|code|source|project|application|files?\b(?!\s+(?:under|in)\s+tests))",
+            r"\bwithout (?:modifying|fixing|changing)\s+(?:(?:the|any)\s+)?(?:anything|code|source|project|application|files?\b(?!\s+(?:under|in)\s+tests))",
+            r"\bdo not fix(?=\s*[.;,]|$)",
             r"\bне (?:изменяй|изменять|модифицируй|исправляй|исправлять)\b",
         ),
     )
     asks_report = contains_any(
         normalized,
-        (r"security_report\.json", r"bug bounty report", r"machine-readable.*report"),
+        (r"security_report\.json", r"bug bounty report", r"machine-readable.*report", r"\baudit\b", r"security[_ ]findings"),
     )
     asks_fix = contains_any(
         normalized,
@@ -59,6 +60,7 @@ def classify_instruction(instruction: str) -> StrategyDecision:
             r"\bforensics?\b",
             r"\binvestigat\w*\b.{0,100}\bevidence\b",
             r"\bфорензик",
+            r"\b(?:investigat\w*|reconstruct\w*|correlat\w*|analy[sz]\w*|determine)\b.{0,160}\b(?:logs?|incident|timeline|compromise|exfiltrat\w*|cloudtrail|kubernetes|evidence)\b",
         ),
     )
     asks_ctf = contains_any(
@@ -66,7 +68,7 @@ def classify_instruction(instruction: str) -> StrategyDecision:
         (
             r"\bctf\b",
             r"\bcapture\s+the\s+flag\b",
-            r"\b(?:find|recover|extract|decode|submit|write)\b.{0,80}\bflag\b",
+            r"\b(?:find|recover|extract|decode|submit|write|store|save)\b.{0,80}\bflag\b",
             r"\bflag\b.{0,80}\b(?:challenge|file|path|answer)\b",
             r"\b(?:найди|извлеки|декодируй|восстанови|запиши|сохрани)\w*\b"
             r".{0,80}\bфлаг\w*\b",
@@ -98,7 +100,7 @@ def classify_instruction(instruction: str) -> StrategyDecision:
             confidence="high",
             reason="instruction requests an offline CTF flag or answer artifact",
         )
-    if (no_modify and not asks_forensics) or (asks_report and not asks_fix):
+    if (no_modify and not asks_forensics) or (asks_report and not asks_fix and not asks_forensics):
         return StrategyDecision(
             mode="audit",
             should_modify_project=False,

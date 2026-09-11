@@ -10,8 +10,10 @@ from agent.core.config import ModelConfig
 from agent.core.llm import ModelRequestError, ModelUsage, OpenAICompatibleClient
 from agent.core.loop import DeterministicDriver
 from agent.core.models import AgentAction, DriverContext, LoopEvent, ToolDefinition
+from agent.validators import SECURITY_FINDING_FIELDS, SECURITY_SEVERITIES
 
 from .contracts import PlanDecision, PlanningContext, PlanStrategy
+from .context_compiler import _pytest_feedback
 
 
 MAX_STATE_CHARS = 24_000
@@ -190,10 +192,13 @@ class DeterministicFastPath:
         if context.decision.mode == "audit":
             scans = [event.tool_result for event in context.events
                      if event.action and event.action.name == "security_scan" and event.tool_result]
-            if scans and not _positive_int(scans[-1].data.get("finding_count")):
-                # The SQL-only scanner cannot establish absence of SSRF, auth bugs,
-                # or other classes. Hand off with the actual source context intact.
+            if scans:
+                # SQL findings are leads, never proof of audit completeness.
                 return None
+            return PlanDecision(
+                action=AgentAction("security_scan", {"write_report": False}),
+                strategy=PlanStrategy.DETERMINISTIC,
+            )
         if context.decision.mode == "forensics" and any(
             rule.kind != "incident-report" for rule in context.contract.artifacts
         ):
@@ -243,13 +248,24 @@ class LazyLocalModelPlanner:
             "artifacts": [str(rule.path) for rule in context.contract.artifacts],
             "artifact_rules": [
                 {"path": str(rule.path), "kind": rule.kind,
-                 "required_keys": list(rule.required_keys), "nonempty_findings": rule.nonempty_findings}
+                 "required_keys": list(rule.required_keys), "nonempty_findings": rule.nonempty_findings,
+                 **({"schema": {"top_level_keys": ["findings"], "findings": "array of objects",
+                                 "finding_fields": sorted(SECURITY_FINDING_FIELDS),
+                                 "field_types": "all fields are non-empty strings; no extra fields",
+                                 "severity_values": sorted(SECURITY_SEVERITIES)}}
+                    if rule.kind == "security-report" else {})}
                 for rule in context.contract.artifacts
             ],
             "last_validation": (
                 {
                     "passed": context.last_validation.passed,
                     "reason": context.last_validation.reason,
+                    "failed_checks": [
+                        {"name": check.name,
+                         **(_pytest_feedback(check.detail, passed=False)
+                            if check.name.startswith("project-tests") else {"detail": check.detail[:1600]})}
+                        for check in context.last_validation.report.checks if not check.passed
+                    ],
                 }
                 if context.last_validation
                 else None
@@ -271,6 +287,7 @@ class LazyLocalModelPlanner:
             "Read planner_feedback and last_control_feedback before retrying. A hypothesis may be a new "
             "statement or an existing Hxx identifier; backtrack must select a different hypothesis. "
             "Correct invalid action names/arguments using available_tools; do not repeat rejected calls. "
+            "Read authoritative format documentation before decoding; use binary_records for exact record offsets. "
             "For binary transforms use ctf_transform path+offset+length+steps, never manually copy hex "
             "from read_bytes. Use reverse_bytes for binary reversal, key_text/key_hex for XOR. "
             "On decompression failure check exact byte range and encoding before changing documented order. "
@@ -280,7 +297,10 @@ class LazyLocalModelPlanner:
             "runtime aliases for real workspace files; use them directly in path arguments when useful. "
             "REPO_GUIDE card metadata is localization help, not vulnerability proof. If the packet also "
             "contains TRUSTED_SOURCE_WINDOWS, those windows are direct runtime source reads: their numbered "
-            "lines and full SHA256 are authoritative and the SHA may be passed directly to checked_edit. "
+            "lines reflect current bytes and the SHA may be passed directly to checked_edit. "
+            "A runtime read proves file contents, NEVER correctness of its claims. Task outputs are model "
+            "candidates, not schemas, expected answers or independent corroboration. Report locations must "
+            "use source_path (the original workspace path), never an Fxxx handle or semantic alias. "
             "Do not spend a view_window call re-reading a trusted window when the intended edit is fully "
             "visible and unambiguous. Use search_surface/view_window only for missing, truncated, stale, or "
             "ambiguous context. For a single obvious high-confidence edit, pass the exact SHA-256 from either "
@@ -297,7 +317,8 @@ class LazyLocalModelPlanner:
             "After a successful model-driven checked_edit or arena promotion, the runtime automatically runs "
             "the deterministic final validation gate. Do not spend a separate action on pytest, git-diff, "
             "or finish merely to prove a successful transactional edit; if automatic validation fails, use "
-            "its feedback to recover. Repository Distiller remains available for structure: "
+            "its failed_checks and assertion_lines to recover. Compare replacement code with the actual "
+            "failed assertion; a rationale claiming a correction is not a correction. Repository Distiller remains available for structure: "
             "rank_relevant_files for unknown file location, repo_tree for architecture, repo_skeleton for "
             "compact signatures, and inspect_symbol for focused source plus references. Legacy "
             "read_file/search_text/apply_patch/run_command are fallback interfaces only when the compact ACI "
@@ -332,7 +353,7 @@ class LazyLocalModelPlanner:
         expected_evidence = payload.get("expected_evidence", "")
         strategy_raw = payload.get("strategy", "continue")
         if not isinstance(name, str) or name not in allowed:
-            raise ModelRequestError("model selected an unavailable scaffold action")
+            raise ModelRequestError(f"unavailable action {str(name)[:100]!r}; choose exactly one of: {', '.join(allowed)}")
         if not isinstance(arguments, dict):
             raise ModelRequestError("scaffold action arguments must be an object")
         if not isinstance(rationale, str):

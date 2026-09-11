@@ -434,9 +434,9 @@ def validate_security_report_payload(payload: Any) -> None:
         raise ValidationError("security report findings must be an array")
     for index, finding in enumerate(findings):
         if not isinstance(finding, dict) or set(finding) != SECURITY_FINDING_FIELDS:
-            raise ValidationError(f"finding {index} has an invalid field set")
+            raise ValidationError(f"finding {index} requires exactly these non-empty string fields: {sorted(SECURITY_FINDING_FIELDS)}")
         if finding["severity"] not in SECURITY_SEVERITIES:
-            raise ValidationError(f"finding {index} has an invalid severity")
+            raise ValidationError(f"finding {index}.severity must be one of {sorted(SECURITY_SEVERITIES)}")
         for key in SECURITY_FINDING_FIELDS:
             value = finding[key]
             if not isinstance(value, str) or not value.strip():
@@ -454,7 +454,7 @@ def validate_artifact(rule: ArtifactRule) -> CheckResult:
                 raise ValidationError(f"regular artifact file is missing: {rule.path}")
         else:
             text = read_utf8_file(rule.path)
-            if rule.kind == "text" and not text:
+            if rule.kind == "text" and not text.strip():
                 raise ValidationError("text artifact must not be empty")
             if rule.kind == "exact-text":
                 if rule.expected_text is None:

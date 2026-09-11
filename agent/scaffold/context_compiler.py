@@ -119,6 +119,8 @@ def _pytest_feedback(output: str, *, passed: bool) -> dict[str, Any]:
         "counts": counts,
         "failed_tests": failed,
         "error_types_found": errors,
+        "assertion_lines": [line[:500] for line in output.splitlines()
+                            if line.startswith((">", "E "))][:12],
     }
 
 
@@ -131,15 +133,19 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
         if len(raw_guide) > MAX_BASE_GUIDE_CHARS:
             guide += "\n... semantic index truncated; use search_surface for lower-ranked files ..."
         snapshot = self.distiller.snapshot()
-        selected_paths: list[str] = []
+        # Format documentation can be the decisive input for data tasks. Generic
+        # security ranking deliberately downranks docs, so honor explicit mentions.
+        selected_paths = [item.path for item in snapshot.files
+                          if item.text and not self.is_task_output(item.path)
+                          and Path(item.path).suffix.casefold() in {".md", ".rst"}
+                          and len(Path(item.path).stem) >= 3
+                          and Path(item.path).stem.casefold() in instruction.casefold()][:1]
         try:
             ranked = self.distiller.rank_relevant_files(query=instruction, limit=10)
             for candidate in ranked.get("candidates", ()):
                 path = str(candidate.get("path", ""))
                 item = snapshot.by_path.get(path)
-                if item is None or item.text is None or _is_test_path(path):
-                    continue
-                if Path(path).suffix.casefold() in {".md", ".rst"}:
+                if item is None or item.text is None or _is_test_path(path) or self.is_task_output(path) or path in selected_paths:
                     continue
                 selected_paths.append(path)
                 if len(selected_paths) >= MAX_SOURCE_FILES:
@@ -149,7 +155,7 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
 
         if not selected_paths:
             for item in snapshot.files:
-                if item.text is None or _is_test_path(item.path) or not item.symbols:
+                if item.text is None or _is_test_path(item.path) or self.is_task_output(item.path) or not item.symbols:
                     continue
                 selected_paths.append(item.path)
                 if len(selected_paths) >= MAX_SOURCE_FILES:
@@ -159,7 +165,8 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
         if selected_paths:
             sections.append(
                 "\n# TRUSTED_SOURCE_WINDOWS\n"
-                "Direct runtime reads, not summaries. Full SHA256 is a valid checked_edit guard; "
+                "Runtime file bytes, not verified conclusions or expected answers. Outputs are excluded. "
+                "Full SHA256 is a valid checked_edit guard; "
                 "skip view_window when the needed edit is fully visible and unambiguous."
             )
         for path in selected_paths:
@@ -180,7 +187,7 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
                 continue
             section = (
                 f"\n## SOURCE {card.handle} {card.semantic_path} "
-                f"SHA256={digest} LINES={first}-{last}/{len(item.text.splitlines())}\n"
+                f"source_path={path} SHA256={digest} LINES={first}-{last}/{len(item.text.splitlines())}\n"
                 f"{rendered}"
             )
             projected = "".join((*sections, section))

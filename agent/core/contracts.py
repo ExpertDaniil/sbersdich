@@ -30,8 +30,8 @@ EXACT_FILE_PATTERNS = (
 
 CTF_ARTIFACT_PATTERNS = (
     re.compile(
-        r"(?:write|save|store|submit|put)\s+(?:(?:the|your)\s+)?"
-        r"(?:recovered\s+|decoded\s+|exact\s+)?(?:flag|answer|result|value)"
+        r"(?:write|save|store|submit|put)\s+(?:(?:only|the|your|complete|recovered|decoded|exact)\s+)*"
+        r"(?:flag|answer|result|value)"
         r".{0,100}?(?:to|at|in|into)\s+(?:the\s+)?(?:file\s+)?"
         r"[`'\"](?P<path>[^`'\"]+)[`'\"]",
         re.IGNORECASE | re.DOTALL,
@@ -119,37 +119,51 @@ def ctf_artifact_requests(instruction: str, workdir: Path) -> tuple[Path, ...]:
     return tuple(matches)
 
 
+# Anchor paths to an output directive, never an arbitrary input/evidence mention.
+REPORT_PATH_PATTERN = re.compile(
+    r"\b(?:write|produce|save|store|create|generate|output|submit)\b"
+    r"[^.\n`\"']{0,140}[`\"'](?P<path>[^`\"'\n]+\.(?:json|txt|md))[`\"']"
+    r"|\b(?:report|output|deliverable)\s+(?:file|path)\s*(?::|=|is)\s*"
+    r"[`\"'](?P<label_path>[^`\"'\n]+\.(?:json|txt|md))[`\"']",
+    re.IGNORECASE,
+)
+
+
+def report_artifact_requests(instruction: str, workdir: Path) -> tuple[Path, ...]:
+    return tuple(dict.fromkeys(
+        map_instruction_path(match.group("path") or match.group("label_path"), workdir)
+        for match in REPORT_PATH_PATTERN.finditer(instruction)
+        if not re.search(r"(?:do not|don't|never|must not|avoid)\s*$",
+                         instruction[max(0, match.start() - 32):match.start()], re.IGNORECASE)
+    ))
+
+
 def build_task_contract(
     decision: StrategyDecision, instruction: str, workdir: Path
 ) -> TaskContract:
     root = canonical_path(workdir)
-    if decision.mode == "audit":
-        return TaskContract(
-            artifacts=(ArtifactRule(
-                "security-report", root / "security_report.json",
-                nonempty_findings=bool(re.search(
-                    r"non[- ]empty\s+[`\"']?findings|findings[`\"']?\s+(?:array\s+)?must\s+not\s+be\s+empty",
-                    instruction, re.IGNORECASE,
-                )),
-            ),),
-        )
-    if decision.mode == "forensics":
-        json_match = re.search(
-            r"\b(?:write|produce|save)\s+[`\"'](?P<path>[^`\"']+\.json)[`\"']",
+    if decision.mode in {"audit", "forensics"}:
+        paths = report_artifact_requests(instruction, root)
+        if not paths:
+            default = "security_report.json" if decision.mode == "audit" else "incident_report.txt"
+            paths = (root / default,)
+        keys_match = re.search(
+            r"\bexactly\s+(?:these|the following)\s+keys\s*:\s*([^\n]*(?:\n[^\n]+)?)",
             instruction, re.IGNORECASE,
         )
-        if json_match:
-            keys_match = re.search(
-                r"\bexactly\s+(?:these|the following)\s+keys\s*:\s*([^\n]*(?:\n[^\n]+)?)",
-                instruction, re.IGNORECASE,
-            )
-            keys = tuple(re.findall(r"[`\"']([A-Za-z_][A-Za-z_0-9]*)[`\"']", keys_match[1])) if keys_match else ()
-            return TaskContract(artifacts=(ArtifactRule(
-                "json", map_instruction_path(json_match["path"], root), required_keys=keys,
-            ),))
-        return TaskContract(
-            artifacts=(ArtifactRule("incident-report", root / "incident_report.txt"),)
-        )
+        keys = tuple(re.findall(r"[`\"']([A-Za-z_][A-Za-z_0-9]*)[`\"']", keys_match[1])) if keys_match else ()
+        nonempty = bool(re.search(
+            r"non[- ]empty\s+[`\"']?findings|findings[`\"']?\s+(?:array\s+)?must\s+not\s+be\s+empty",
+            instruction, re.IGNORECASE,
+        ))
+        return TaskContract(artifacts=tuple(
+            ArtifactRule(
+                "security-report" if decision.mode == "audit" and path.suffix.lower() == ".json"
+                else "json" if path.suffix.lower() == ".json"
+                else "incident-report" if path.name == "incident_report.txt" else "text",
+                path, required_keys=keys, nonempty_findings=nonempty,
+            ) for path in paths
+        ))
     if decision.mode == "ctf":
         return TaskContract(
             artifacts=tuple(
