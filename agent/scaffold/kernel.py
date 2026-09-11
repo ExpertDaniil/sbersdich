@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from agent.core.contracts import build_task_contract
+from agent.core.llm import ModelRequestError
 from agent.core.models import AgentAction
 from agent.core.playbooks import load_playbook, load_validation_playbook
 from agent.strategies import StrategyDecision, classify_instruction
@@ -134,6 +135,9 @@ class AgentKernel:
         final_verification: VerificationResult | None = None
         repeated_actions: Counter[str] = Counter()
         control_rejections = 0
+        planner_errors = 0
+        contract = None
+        baseline = None
         started = self.clock()
         tools = ()
 
@@ -153,6 +157,7 @@ class AgentKernel:
                 self.workdir,
                 decision,
                 self.limits.max_capability,
+                tuple(rule.path for rule in contract.artifacts),
             )
             tools = self.tool_bus.catalog(execution_context)
             allowed = {tool.name for tool in tools} | RESERVED_ACTIONS
@@ -165,6 +170,9 @@ class AgentKernel:
                     raise ScaffoldKernelError("step budget exhausted")
 
                 remaining = max(0.0, self.limits.deadline_seconds - elapsed)
+                reserve = min(10.0, self.limits.deadline_seconds * 0.1)
+                if remaining <= reserve:
+                    raise ScaffoldKernelError("planning budget exhausted; reserved final verification time")
                 snapshot = state.snapshot(tools)
                 repository_guide = (
                     self.repository_context.task_guide(instruction)
@@ -182,11 +190,19 @@ class AgentKernel:
                     state_snapshot=snapshot,
                     events=tuple(state.events),
                     last_validation=last_validation,
-                    remaining_seconds=remaining,
+                    remaining_seconds=remaining - reserve,
                     extension_guidance=self.extension_guidance,
                     repository_guide=repository_guide,
                 )
-                plan = self.planner.next_plan(planning_context)
+                try:
+                    plan = self.planner.next_plan(planning_context)
+                except ModelRequestError as error:
+                    planner_errors += 1
+                    state.record_planner_error(str(error))
+                    if planner_errors > self.limits.max_repeated_action:
+                        raise
+                    continue
+                planner_errors = 0
                 action = plan.action
                 if action.name not in allowed:
                     raise ScaffoldKernelError(
@@ -338,9 +354,50 @@ class AgentKernel:
                             f"validation failed: {final_verification.reason}"
                         )
         except (OSError, UnicodeError, ValueError, RuntimeError) as error:
+            stop_reason = str(error)
+            # EnIGMA/SWE-agent-inspired recovery: a planner failure does not erase
+            # work already performed. Reserve one bounded deterministic check;
+            # never fabricate an artifact or bypass a failed gate to claim success.
+            remaining = self.limits.deadline_seconds - (self.clock() - started)
+            changed_since_check = False
+            for event in reversed(state.events):
+                if event.validation is not None:
+                    break
+                if (event.tool_result and event.tool_result.ok and event.action
+                        and event.action.name in {
+                            "write_file", "append_file", "write_exact_text",
+                            "checked_edit", "arena_promote", "apply_patch", "sql_parameterize",
+                        }):
+                    changed_since_check = True
+                    break
+            if (decision is not None and contract is not None and baseline is not None
+                    and remaining > 0 and validations < self.limits.max_validations
+                    and changed_since_check):
+                try:
+                    validations += 1
+                    final_verification = self._verify(
+                        decision=decision, contract=contract, baseline=baseline,
+                        state=state, started=started,
+                    )
+                    if final_verification.feedback is not None:
+                        if steps < self.limits.max_steps:
+                            steps += 1
+                        state.record_validation_event(
+                            steps,
+                            AgentAction("finish", rationale=f"final verification after planner stop: {error}"),
+                            final_verification.feedback,
+                        )
+                        if final_verification.passed:
+                            return self._result(
+                                status="succeeded", reason="existing result passed final recovery verification",
+                                decision=decision, steps=steps, validations=validations,
+                                state=state, tools=tools, final_validation=final_verification,
+                            )
+                except (OSError, UnicodeError, ValueError, RuntimeError) as recovery_error:
+                    stop_reason += f"; recovery verification failed: {recovery_error}"
             return self._result(
                 status="failed",
-                reason=str(error),
+                reason=stop_reason,
                 decision=decision,
                 steps=steps,
                 validations=validations,

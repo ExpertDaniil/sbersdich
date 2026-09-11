@@ -109,6 +109,12 @@ class AgentState:
         self._last_progress_reason = "no trusted observation yet"
         self._control_rejections = 0
         self._last_control_feedback: dict[str, Any] | None = None
+        self._planner_feedback: str | None = None
+        self._evidence_sequence = 0
+        self._latest_by_path: dict[str, dict[str, Any]] = {}
+
+    def record_planner_error(self, reason: str) -> None:
+        self._planner_feedback = _bounded(reason, 900)
 
     @property
     def current_hypothesis_id(self) -> str | None:
@@ -138,7 +144,10 @@ class AgentState:
         selected = self._current_hypothesis_id
         if statement:
             key = " ".join(statement.casefold().split())
-            selected = self._statement_index.get(key)
+            # Hxx is a reference to an existing runtime hypothesis, not a new
+            # hypothesis whose statement happens to be "Hxx".
+            selected = next((hid for hid in self._hypotheses if hid.casefold() == key), None)
+            selected = selected or self._statement_index.get(key)
             if selected is None and len(self._hypotheses) < MAX_HYPOTHESES:
                 selected = f"H{len(self._hypotheses) + 1:02d}"
                 parent = (
@@ -171,6 +180,7 @@ class AgentState:
         self._current_hypothesis_id = selected
         self._action_hypothesis[plan.action.fingerprint()] = selected
         self._last_control_feedback = None
+        self._planner_feedback = None
 
     def _record_evidence(
         self,
@@ -199,8 +209,9 @@ class AgentState:
         novel = fingerprint not in self._evidence_fingerprints
         if novel:
             self._evidence_fingerprints.add(fingerprint)
+            self._evidence_sequence += 1
             record = EvidenceRecord(
-                evidence_id=f"E{len(self._evidence) + 1:02d}",
+                evidence_id=f"E{self._evidence_sequence:02d}",
                 sequence=sequence,
                 source=source,
                 action=action.name,
@@ -212,6 +223,13 @@ class AgentState:
             )
             self._evidence.append(record)
             self._evidence = self._evidence[-MAX_EVIDENCE:]
+            if source == "tool" and ok and isinstance(data, dict):
+                path = data.get("path")
+                if isinstance(path, str):
+                    self._latest_by_path.pop(path, None)
+                    self._latest_by_path[path] = record.as_payload()
+                    while len(self._latest_by_path) > 8:
+                        self._latest_by_path.pop(next(iter(self._latest_by_path)))
             if hypothesis_id in self._hypotheses:
                 node = self._hypotheses[hypothesis_id]
                 node.evidence_ids.append(record.evidence_id)
@@ -325,6 +343,8 @@ class AgentState:
             "recommended_capability_level": recommended,
             "control_rejections": self._control_rejections,
             "last_control_feedback": self._last_control_feedback,
+            "planner_feedback": self._planner_feedback,
+            "latest_by_path": list(self._latest_by_path.values()),
             "capability_ladder": [
                 {"level": level, "tools": sorted(names)}
                 for level, names in sorted(ladder.items())

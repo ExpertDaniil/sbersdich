@@ -94,7 +94,7 @@ class WorkspaceFileProvider:
         self.workdir = canonical_path(workdir)
 
     def catalog(self, context: ExecutionContext) -> tuple[ToolSpec, ...]:
-        modes = ("general", "fix")
+        modes = ("general", "fix", "audit", "forensics")
         return (
             ToolSpec(
                 "write_file",
@@ -127,6 +127,14 @@ class WorkspaceFileProvider:
                 must_exist=False,
                 for_write=True,
             )
+            if context.decision.mode in {"audit", "forensics"}:
+                if target not in {canonical_path(path) for path in context.artifact_paths}:
+                    raise ValueError("read-only mode permits only declared artifact paths")
+                if context.decision.mode == "forensics" and target.exists():
+                    # Generated outputs may be revised, but source evidence is never
+                    # an acceptable output even when mentioned in the instruction.
+                    if any(part.lower() in {"evidence", "incident"} for part in target.relative_to(self.workdir).parts[:-1]):
+                        raise ValueError("cannot overwrite incident evidence")
             if action.name == "write_file":
                 rendered = content.encode("utf-8")
             elif action.name == "append_file":

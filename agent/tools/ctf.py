@@ -32,6 +32,7 @@ SUPPORTED_OPERATIONS = frozenset(
         "gzip",
         "hex",
         "reverse",
+        "reverse_bytes",
         "rot13",
         "url",
         "xor",
@@ -223,8 +224,17 @@ def transform_ctf_data(value: object, steps: object) -> dict[str, Any]:
         raise CtfTransformError("value must be non-empty text without NUL")
     if len(value) > MAX_INPUT_CHARS:
         raise CtfTransformError(f"value exceeds {MAX_INPUT_CHARS} characters")
+    return transform_ctf_bytes(value.encode("utf-8"), steps)
+
+
+def transform_ctf_bytes(data: bytes, steps: object) -> dict[str, Any]:
+    """Transform exact runtime bytes; never route binary input through model text."""
+
+    if not isinstance(data, bytes) or not data or len(data) > MAX_INPUT_CHARS:
+        raise CtfTransformError("input must be bounded non-empty bytes")
     parsed_steps = _parse_steps(steps)
-    data = value.encode("utf-8")
+    input_size = len(data)
+    input_sha256 = hashlib.sha256(data).hexdigest()
 
     applied: list[str] = []
     for step in parsed_steps:
@@ -241,6 +251,8 @@ def transform_ctf_data(value: object, steps: object) -> dict[str, Any]:
             data = _decode_url(data)
         elif operation in {"rot13", "reverse"}:
             data = _text_transform(data, operation)
+        elif operation == "reverse_bytes":
+            data = data[::-1]
         elif operation == "xor":
             data = _xor(data, step)
         elif operation == "gzip":
@@ -259,6 +271,8 @@ def transform_ctf_data(value: object, steps: object) -> dict[str, Any]:
         chr(byte) if 32 <= byte <= 126 else "." for byte in data[:MAX_PREVIEW_CHARS]
     )
     return {
+        "input_size_bytes": input_size,
+        "input_sha256": input_sha256,
         "operations": applied,
         "size_bytes": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),

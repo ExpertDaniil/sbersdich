@@ -110,6 +110,8 @@ class ArtifactRule:
     kind: str
     path: Path
     expected_text: str | None = None
+    required_keys: tuple[str, ...] = ()
+    nonempty_findings: bool = False
 
 
 @dataclass(frozen=True)
@@ -466,6 +468,12 @@ def validate_artifact(rule: ArtifactRule) -> CheckResult:
                     raise ValidationError(f"artifact is not valid JSON: {error}") from error
                 if rule.kind == "security-report":
                     validate_security_report_payload(payload)
+                    if rule.nonempty_findings and not payload["findings"]:
+                        raise ValidationError("instruction requires non-empty findings; inspect beyond the SQL scanner")
+                if rule.required_keys and (
+                    not isinstance(payload, dict) or set(payload) != set(rule.required_keys)
+                ):
+                    raise ValidationError("JSON artifact must contain exactly the declared keys")
             if rule.kind == "incident-report":
                 validate_incident_report_text(text)
         elapsed = round((time.monotonic() - started) * 1000)

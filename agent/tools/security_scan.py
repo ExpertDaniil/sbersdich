@@ -56,6 +56,22 @@ class Finding:
         return asdict(self)
 
 
+def finding_observation(findings: list[Finding]) -> dict[str, object]:
+    """A bounded diagnostic view; full reports retain the original evidence."""
+    selected = findings[:8]
+    return {
+        "finding_count": len(findings),
+        "findings": [
+            {key: value if len(value) <= 400 else value[:400] + "…"
+             for key, value in item.as_report_item().items()}
+            for item in selected
+        ],
+        "truncated": len(findings) > 8 or any(
+            len(value) > 400 for item in selected for value in item.as_report_item().values()
+        ),
+    }
+
+
 def source_segment(source: str, node: ast.AST) -> str:
     return ast.get_source_segment(source, node) or ast.unparse(node)
 
@@ -256,6 +272,104 @@ def call_method_name(call: ast.Call) -> str | None:
     return None
 
 
+def _finite_values(node: ast.AST, values: dict[str, frozenset[str]],
+                   constraints: dict[str, frozenset[str]]) -> frozenset[str] | None:
+    """Small, fail-closed finite-string analysis for local SQL allowlists."""
+    constrained = constraints.get(ast.dump(node))
+    if constrained is not None:
+        return constrained
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return frozenset({node.value})
+    if isinstance(node, ast.Name):
+        return values.get(node.id)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)) and 0 < len(node.elts) <= 32:
+        parts = [_finite_values(item, values, constraints) for item in node.elts]
+        if all(part is not None for part in parts):
+            return frozenset().union(*parts)
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"lower", "upper"} and not node.args and not node.keywords):
+        source = _finite_values(node.func.value, values, constraints)
+        if source is not None:
+            return frozenset(getattr(item, node.func.attr)() for item in source)
+    return None
+
+
+def _finite_block(statements: list[ast.stmt], values: dict[str, frozenset[str]],
+                  constraints: dict[str, frozenset[str]] | None = None) -> dict[str, frozenset[str]] | None:
+    values = dict(values)
+    constraints = dict(constraints or {})
+    for statement in statements:
+        if isinstance(statement, (ast.Raise, ast.Return)):
+            return None
+        if isinstance(statement, ast.Assign) and all(isinstance(t, ast.Name) for t in statement.targets):
+            finite = _finite_values(statement.value, values, constraints)
+            if any(isinstance(child, ast.Call) and _finite_values(child, values, constraints) is None
+                   for child in ast.walk(statement.value)):
+                values.clear()  # unknown calls may mutate a local allowlist through aliases
+            for target in statement.targets:
+                if finite is None:
+                    values.pop(target.id, None)
+                else:
+                    values[target.id] = finite
+            constraints.clear()
+        elif isinstance(statement, ast.If) and isinstance(statement.test, ast.Compare):
+            test = statement.test
+            if len(test.ops) != 1 or not isinstance(test.ops[0], (ast.In, ast.NotIn)):
+                values.clear()
+                constraints.clear()
+                continue
+            simple_subject = isinstance(test.left, ast.Name) or (
+                isinstance(test.left, ast.Call) and isinstance(test.left.func, ast.Attribute)
+                and isinstance(test.left.func.value, ast.Name)
+                and test.left.func.attr in {"lower", "upper"}
+                and not test.left.args and not test.left.keywords
+            )
+            if not simple_subject:
+                values.clear()
+                constraints.clear()
+                continue
+            choices = _finite_values(test.comparators[0], values, {})
+            if not choices:
+                values.clear()
+                constraints.clear()
+                continue
+            positive = {ast.dump(test.left): choices}
+            true_values, false_values = dict(values), dict(values)
+            is_in = isinstance(test.ops[0], ast.In)
+            if isinstance(test.left, ast.Name):
+                (true_values if is_in else false_values)[test.left.id] = choices
+            left = _finite_block(statement.body, true_values, positive if is_in else {})
+            right = _finite_block(statement.orelse, false_values, {} if is_in else positive)
+            if left is None and right is None:
+                return None
+            if left is None:
+                values = right
+            elif right is None:
+                values = left
+            else:
+                values = {key: left[key] | right[key] for key in left.keys() & right.keys()}
+            constraints.clear()
+        elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
+            continue
+        else:
+            # Loops, try, arbitrary calls and mutations invalidate proofs. This
+            # deliberately does not turn a general AST scanner into a full solver.
+            values.clear()
+            constraints.clear()
+    return values
+
+
+def _finite_names_before(function: ast.FunctionDef | ast.AsyncFunctionDef, node: ast.AST) -> set[str]:
+    for index, statement in enumerate(function.body):
+        # Only direct statements are eligible. Nested control flow retains the
+        # original conservative taint analysis.
+        if node is statement or (isinstance(statement, (ast.Expr, ast.Return)) and node is statement.value):
+            values = _finite_block(function.body[:index], {}) or {}
+            return {name for name, choices in values.items()
+                    if choices and all(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", item) for item in choices)}
+    return set()
+
+
 def audit_function(
     function: ast.FunctionDef | ast.AsyncFunctionDef,
     source: str,
@@ -268,7 +382,9 @@ def audit_function(
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        info = dynamic_sql_from_expression(node.value, tainted_names, source)
+        info = dynamic_sql_from_expression(
+            node.value, tainted_names - _finite_names_before(function, node), source
+        )
         if info is None:
             continue
         for target in targets:
@@ -287,7 +403,9 @@ def audit_function(
         if isinstance(first_argument, ast.Name):
             info = assignments.get(first_argument.id)
         else:
-            info = dynamic_sql_from_expression(first_argument, tainted_names, source)
+            info = dynamic_sql_from_expression(
+                first_argument, tainted_names - _finite_names_before(function, node), source
+            )
         if info is None:
             continue
         call_key = (node.lineno, node.col_offset)

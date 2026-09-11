@@ -64,6 +64,7 @@ class ExecutionContext:
     workdir: Path
     decision: StrategyDecision
     max_capability: CapabilityLevel
+    artifact_paths: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)

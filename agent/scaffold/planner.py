@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
 
@@ -19,6 +20,46 @@ MAX_REPO_GUIDE_CHARS = 6_000
 FORBIDDEN_MODEL_OWNED_EVIDENCE_KEYS = frozenset(
     {"observation", "evidence", "facts", "confirmed_facts", "tool_result"}
 )
+
+
+def _encode_state(state: dict[str, Any]) -> str:
+    """Drop optional history structurally; never send sliced, invalid JSON.
+
+    The contract, tool schemas and actionable recovery feedback take precedence
+    over old observations. Full events remain in the runtime trace.
+    """
+    compact = copy.deepcopy(state)
+
+    def encode() -> str:
+        return json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+
+    snapshot = compact["task_state"]
+    for key in ("goal", "capability_ladder"):
+        snapshot.pop(key, None)  # already represented by instruction/tool catalog
+    encoded = encode()
+    for key, minimum in (("evidence", 2), ("recent_events", 1), ("latest_by_path", 0)):
+        items = snapshot.get(key, [])
+        while len(encoded) > MAX_STATE_CHARS and len(items) > minimum:
+            items.pop(0)
+            encoded = encode()
+    if len(encoded) > MAX_STATE_CHARS:
+        current = snapshot.get("current_hypothesis_id")
+        snapshot["hypotheses"] = [h for h in snapshot.get("hypotheses", []) if h.get("id") == current]
+        encoded = encode()
+    if len(encoded) > MAX_STATE_CHARS:
+        # An omitted packet can be fetched again through bounded file tools.
+        compact["repository_guide"] = "Source packet omitted for budget; use view_window/read_file."
+        encoded = encode()
+    if len(encoded) > MAX_STATE_CHARS:
+        for event in snapshot.get("recent_events", []):
+            if "action" in event:
+                event["action"].pop("arguments", None)
+        for item in snapshot.get("evidence", []):
+            item.pop("data_preview", None)
+        encoded = encode()
+    if len(encoded) > MAX_STATE_CHARS:
+        raise ModelRequestError("required planner context exceeds budget")
+    return encoded
 
 
 def _raw_json_object_at_or_after(
@@ -146,6 +187,17 @@ class DeterministicFastPath:
             context.events
         ):
             return None
+        if context.decision.mode == "audit":
+            scans = [event.tool_result for event in context.events
+                     if event.action and event.action.name == "security_scan" and event.tool_result]
+            if scans and not _positive_int(scans[-1].data.get("finding_count")):
+                # The SQL-only scanner cannot establish absence of SSRF, auth bugs,
+                # or other classes. Hand off with the actual source context intact.
+                return None
+        if context.decision.mode == "forensics" and any(
+            rule.kind != "incident-report" for rule in context.contract.artifacts
+        ):
+            return None
         driver_context = DriverContext(
             instruction=context.instruction,
             workdir=context.workdir,
@@ -189,6 +241,11 @@ class LazyLocalModelPlanner:
             "available_tools": [tool.as_payload() for tool in context.tools],
             "task_state": context.state_snapshot,
             "artifacts": [str(rule.path) for rule in context.contract.artifacts],
+            "artifact_rules": [
+                {"path": str(rule.path), "kind": rule.kind,
+                 "required_keys": list(rule.required_keys), "nonempty_findings": rule.nonempty_findings}
+                for rule in context.contract.artifacts
+            ],
             "last_validation": (
                 {
                     "passed": context.last_validation.passed,
@@ -200,9 +257,7 @@ class LazyLocalModelPlanner:
         }
         if context.repository_guide:
             state["repository_guide"] = context.repository_guide[:MAX_REPO_GUIDE_CHARS]
-        encoded_state = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
-        if len(encoded_state) > MAX_STATE_CHARS:
-            encoded_state = encoded_state[:MAX_STATE_CHARS] + "…"
+        encoded_state = _encode_state(state)
         system = (
             "You are the planning policy for an offline autonomous cybersecurity agent. "
             "Choose exactly one next action. Return only one JSON object. Required keys: "
@@ -213,6 +268,14 @@ class LazyLocalModelPlanner:
             "fields and never invent tool output. Prefer the lowest capability level that can "
             "discriminate the current hypothesis. If task_state.recovery_required is true, materially "
             "change the hypothesis, tool family, or capability level instead of repeating the same probe. "
+            "Read planner_feedback and last_control_feedback before retrying. A hypothesis may be a new "
+            "statement or an existing Hxx identifier; backtrack must select a different hypothesis. "
+            "Correct invalid action names/arguments using available_tools; do not repeat rejected calls. "
+            "For binary transforms use ctf_transform path+offset+length+steps, never manually copy hex "
+            "from read_bytes. Use reverse_bytes for binary reversal, key_text/key_hex for XOR. "
+            "On decompression failure check exact byte range and encoding before changing documented order. "
+            "security_scan only covers dynamic SQL: its counts do not establish absence of other bugs. "
+            "Audit/forensics write_file is restricted to declared artifact paths. "
             "The user state may contain a virtual REPO_GUIDE.md. Its Fxxx handles and semantic paths are "
             "runtime aliases for real workspace files; use them directly in path arguments when useful. "
             "REPO_GUIDE card metadata is localization help, not vulnerability proof. If the packet also "

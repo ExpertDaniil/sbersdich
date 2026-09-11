@@ -57,6 +57,7 @@ def classify_instruction(instruction: str) -> StrategyDecision:
             r"incident_report\.txt",
             r"\bincident\b.*\blogs?\b",
             r"\bforensics?\b",
+            r"\binvestigat\w*\b.{0,100}\bevidence\b",
             r"\bфорензик",
         ),
     )
@@ -97,7 +98,7 @@ def classify_instruction(instruction: str) -> StrategyDecision:
             confidence="high",
             reason="instruction requests an offline CTF flag or answer artifact",
         )
-    if no_modify or (asks_report and not asks_fix):
+    if (no_modify and not asks_forensics) or (asks_report and not asks_fix):
         return StrategyDecision(
             mode="audit",
             should_modify_project=False,

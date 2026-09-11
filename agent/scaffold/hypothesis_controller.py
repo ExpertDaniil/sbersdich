@@ -35,6 +35,10 @@ class RuntimeHypothesisController:
         current = state_snapshot.get("current_hypothesis_id")
         recovery = bool(state_snapshot.get("recovery_required"))
         proposed_statement = " ".join(plan.hypothesis.casefold().split())
+        for node in state_snapshot.get("hypotheses", []):
+            if isinstance(node, dict) and str(node.get("id", "")).casefold() == proposed_statement:
+                proposed_statement = " ".join(str(node.get("statement", "")).casefold().split())
+                break
 
         # A branch without a falsifiable observation target is merely extra prose.
         if plan.strategy is PlanStrategy.BRANCH:

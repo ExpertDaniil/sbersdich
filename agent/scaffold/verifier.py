@@ -2,30 +2,20 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
+
 from agent.core.ctf_completion import check_ctf_completion
 from agent.core.fix_validation import failed_validation_reason, validate_fix_task
 from agent.core.models import ValidationFeedback
-from agent.validators import ValidationPolicy, validate_task
+from agent.tools.security_scan import finding_observation, scan_project
+from agent.validators import CheckResult, ValidationPolicy, validate_task
 
 from .contracts import VerificationContext, VerificationResult
 
 
 class LegacyTaskVerifier:
     """Keep the existing validator as a hard success gate."""
-
-    @staticmethod
-    def _last_clean_scan(context: VerificationContext) -> bool | None:
-        scans = [
-            event.tool_result
-            for event in context.events
-            if event.action
-            and event.action.name == "security_scan"
-            and event.tool_result
-            and event.tool_result.ok
-        ]
-        if not scans:
-            return None
-        return scans[-1].data.get("finding_count") == 0
 
     def verify(self, context: VerificationContext) -> VerificationResult:
         policy = ValidationPolicy(
@@ -60,13 +50,18 @@ class LegacyTaskVerifier:
                 passed = False
                 reason = "fix mode produced no project change"
             else:
-                clean_scan = self._last_clean_scan(context)
-                if clean_scan is False:
+                # A pre-edit scan is not evidence about the current file version.
+                # Run the same scanner on the actual candidate, and expose details
+                # in trusted validation feedback so the planner can act on them.
+                findings = scan_project(context.workdir, include_tests=False)
+                scan_detail = json.dumps(finding_observation(findings), ensure_ascii=False)
+                report = replace(
+                    report, passed=not findings,
+                    checks=report.checks + (CheckResult("post-fix-security-scan", not findings, scan_detail),),
+                )
+                if findings:
                     passed = False
-                    reason = "post-fix security scan still has supported findings"
-                elif clean_scan is None:
-                    passed = False
-                    reason = "fix mode has no successful post-action security scan"
+                    reason = "post-fix security scan still has supported findings: " + scan_detail[:2500]
         elif context.decision.mode == "ctf":
             passed, reason = check_ctf_completion(
                 context.contract, context.events, report

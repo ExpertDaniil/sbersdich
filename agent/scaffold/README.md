@@ -113,3 +113,6 @@ python3 scripts/build_scaffold_submission.py
 ```
 
 See `docs/TEST_GOVNO_SCAFFOLD.md` for the team extension recipe and architecture rationale.
+
+Byte-safe transforms, explicit artifact contracts and bounded planner recovery are
+described in [`docs/ENIGMA_ACI_RECOVERY.md`](../../docs/ENIGMA_ACI_RECOVERY.md).

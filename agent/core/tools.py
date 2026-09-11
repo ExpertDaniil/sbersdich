@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent.strategies import StrategyDecision
-from agent.tools.ctf import transform_ctf_data
+from agent.tools.ctf import transform_ctf_bytes, transform_ctf_data
 from agent.tools.forensics import (
     analyze_incident,
     ensure_output_outside_evidence,
@@ -16,7 +16,7 @@ from agent.tools.forensics import (
     inventory_digest,
     resolve_incident_directory,
 )
-from agent.tools.security_scan import render_report, scan_project
+from agent.tools.security_scan import finding_observation, render_report, scan_project
 from agent.tools.sql_parameterize import parameterize_project
 from agent.validators import (
     canonical_path,
@@ -108,11 +108,17 @@ TOOL_DEFINITIONS = {
     ),
     "ctf_transform": ToolDefinition(
         "ctf_transform",
-        "Apply an explicit bounded offline decode/decompress/XOR transform chain.",
+        "Transform text OR an exact file byte range. Prefer path/offset/length for binary data.",
         {
-            "value": "string",
-            "steps": "object[]; operations=base32/base64/base64url/hex/url/rot13/"
-            "reverse/xor/gzip/zlib",
+            "value": "string; text input, mutually exclusive with path/offset/length",
+            "path": "string; binary source file, requires offset and length; omit value",
+            "offset": "integer>=0; zero-based first byte",
+            "length": "integer=1..4096; exact byte count, short reads fail",
+            "steps": 'object[] in recovery order; each {"operation":"base32|base64|'
+            'base64url|hex|url|rot13|reverse|reverse_bytes|xor|gzip|zlib"}; '
+            'xor requires exactly key_text:string OR key_hex:string (never key); '
+            'reverse is UTF-8 characters, reverse_bytes is raw bytes; '
+            'textual hex requires an initial {"operation":"hex"}',
         },
     ),
     "write_exact_text": ToolDefinition(
@@ -295,8 +301,9 @@ class SecurityToolRegistry:
             True,
             f"security scan completed with {len(findings)} finding(s)",
             {
-                "finding_count": len(findings),
+                **finding_observation(findings),
                 "report": str(output_path) if output_path else None,
+                "scope": "Python dynamic SQL only; a clean scan does not prove other vulnerability classes absent",
             },
         )
 
@@ -370,10 +377,23 @@ class SecurityToolRegistry:
         )
 
     def _ctf_transform(self, arguments: dict[str, Any]) -> ToolResult:
-        self._only(arguments, {"value", "steps"}, "ctf_transform")
-        if set(arguments) != {"value", "steps"}:
-            raise ToolPolicyError("ctf_transform requires value and steps")
-        data = transform_ctf_data(arguments["value"], arguments["steps"])
+        self._only(arguments, {"value", "steps", "path", "offset", "length"}, "ctf_transform")
+        if set(arguments) == {"value", "steps"}:
+            data = transform_ctf_data(arguments["value"], arguments["steps"])
+        elif set(arguments) == {"path", "offset", "length", "steps"}:
+            source = read_workspace_bytes(
+                self.workdir, path=arguments["path"],
+                offset=arguments["offset"], length=arguments["length"],
+            )
+            if source["bytes_read"] != arguments["length"]:
+                raise ToolPolicyError("binary range is incomplete; check offset and declared length")
+            data = transform_ctf_bytes(bytes.fromhex(source["hex"]), arguments["steps"])
+            data["source"] = {
+                "path": source["path"], "offset": source["offset"],
+                "length": source["bytes_read"],
+            }
+        else:
+            raise ToolPolicyError("ctf_transform requires value+steps OR path+offset+length+steps")
         return ToolResult(
             True,
             f"applied {len(data['operations'])} bounded CTF transform(s)",

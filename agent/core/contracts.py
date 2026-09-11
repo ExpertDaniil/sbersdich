@@ -31,7 +31,7 @@ EXACT_FILE_PATTERNS = (
 CTF_ARTIFACT_PATTERNS = (
     re.compile(
         r"(?:write|save|store|submit|put)\s+(?:(?:the|your)\s+)?"
-        r"(?:recovered\s+|decoded\s+)?(?:flag|answer|result|value)"
+        r"(?:recovered\s+|decoded\s+|exact\s+)?(?:flag|answer|result|value)"
         r".{0,100}?(?:to|at|in|into)\s+(?:the\s+)?(?:file\s+)?"
         r"[`'\"](?P<path>[^`'\"]+)[`'\"]",
         re.IGNORECASE | re.DOTALL,
@@ -125,9 +125,28 @@ def build_task_contract(
     root = canonical_path(workdir)
     if decision.mode == "audit":
         return TaskContract(
-            artifacts=(ArtifactRule("security-report", root / "security_report.json"),)
+            artifacts=(ArtifactRule(
+                "security-report", root / "security_report.json",
+                nonempty_findings=bool(re.search(
+                    r"non[- ]empty\s+[`\"']?findings|findings[`\"']?\s+(?:array\s+)?must\s+not\s+be\s+empty",
+                    instruction, re.IGNORECASE,
+                )),
+            ),),
         )
     if decision.mode == "forensics":
+        json_match = re.search(
+            r"\b(?:write|produce|save)\s+[`\"'](?P<path>[^`\"']+\.json)[`\"']",
+            instruction, re.IGNORECASE,
+        )
+        if json_match:
+            keys_match = re.search(
+                r"\bexactly\s+(?:these|the following)\s+keys\s*:\s*([^\n]*(?:\n[^\n]+)?)",
+                instruction, re.IGNORECASE,
+            )
+            keys = tuple(re.findall(r"[`\"']([A-Za-z_][A-Za-z_0-9]*)[`\"']", keys_match[1])) if keys_match else ()
+            return TaskContract(artifacts=(ArtifactRule(
+                "json", map_instruction_path(json_match["path"], root), required_keys=keys,
+            ),))
         return TaskContract(
             artifacts=(ArtifactRule("incident-report", root / "incident_report.txt"),)
         )
