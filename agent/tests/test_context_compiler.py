@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.scaffold.context_compiler import RepositoryContextCompiler
+from agent.scaffold.context_compiler import RepositoryContextCompiler, _pytest_feedback
 from agent.scaffold.security_relevance import SecurityAwareRepositoryDistiller
 
 
@@ -60,6 +60,25 @@ class RepositoryContextCompilerTests(unittest.TestCase):
 
             self.assertNotEqual(before, after)
             self.assertIn(hashlib.sha256(access.read_bytes()).hexdigest(), after)
+
+    def test_pytest_feedback_extracts_nodes_counts_and_error_types(self):
+        raw = (
+            "test_access.py .F.\n"
+            "E   AssertionError: assert not True\n"
+            "FAILED test_access.py::test_viewer_cannot_delete - AssertionError\n"
+            "1 failed, 2 passed in 0.01s\n"
+        )
+
+        feedback = _pytest_feedback(raw, passed=False)
+
+        self.assertEqual(feedback["status"], "failed")
+        self.assertEqual(
+            feedback["failed_tests"],
+            ["test_access.py::test_viewer_cannot_delete"],
+        )
+        self.assertIn("AssertionError", feedback["error_types_found"])
+        self.assertEqual(feedback["counts"]["failed"], 1)
+        self.assertEqual(feedback["counts"]["passed"], 2)
 
 
 if __name__ == "__main__":
