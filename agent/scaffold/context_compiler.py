@@ -1,29 +1,45 @@
 """Task-conditioned repository context compiler for the model-facing interface.
 
-This module deliberately does not mutate or rename the task workspace.  It extends
-``SemanticRepositoryContext`` with a tiny packet of trusted source windows for the
-highest-ranked files.  The LLM therefore gets three levels of context in one bounded
-observation:
+The task workspace is never renamed.  The model receives three bounded levels of
+context in one locally-derived packet:
 
-L0 semantic filename/handle -> L1 compact REPO_GUIDE -> L2 selected source window.
+L0 semantic filename/handle -> L1 compact REPO_GUIDE -> L2 trusted source window.
 
-Everything is derived locally from the repository index; no model call is spent on
-building the packet.  Full-file SHA-256 digests make an included source window usable
-as the optimistic-concurrency guard for ``checked_edit``.
+The module also adds typed pytest summaries to the semantic ACI.  This independently
+adopts the useful *idea* of structured test feedback used by other competition agents,
+without importing their implementation: the planner sees failed node ids and error
+classes before raw process noise.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
+from typing import Any
 
-from .semantic_namespace import SemanticRepositoryContext, _is_test_path
+from agent.core.models import ToolResult
+
+from .semantic_namespace import (
+    SemanticCyberACIProvider,
+    SemanticRepositoryContext,
+    _is_test_path,
+)
 
 
 MAX_CONTEXT_PACKET_CHARS = 10_000
 MAX_SOURCE_FILES = 3
 MAX_SOURCE_LINES = 64
 MAX_SINGLE_SOURCE_CHARS = 3_600
+MAX_TYPED_FAILURES = 8
+MAX_ERROR_TYPES = 6
+
+_FAILED_RE = re.compile(r"^FAILED\s+([^\s]+)", re.MULTILINE)
+_ERROR_RE = re.compile(r"\b([A-Z][A-Za-z0-9_]*(?:Error|Exception))\b")
+_SUMMARY_RE = re.compile(
+    r"(?:(\d+)\s+failed)?(?:,?\s*(\d+)\s+passed)?(?:,?\s*(\d+)\s+errors?)?",
+    re.IGNORECASE,
+)
 
 
 def _query_terms(text: str) -> tuple[str, ...]:
@@ -71,6 +87,44 @@ def _window_for(item, instruction: str) -> tuple[int, int, str]:
     if len(rendered) > MAX_SINGLE_SOURCE_CHARS:
         rendered = rendered[:MAX_SINGLE_SOURCE_CHARS] + "\n... source window truncated ..."
     return first, last, rendered
+
+
+def _pytest_feedback(output: str, *, passed: bool) -> dict[str, Any]:
+    failed: list[str] = []
+    for match in _FAILED_RE.finditer(output):
+        node_id = match.group(1)
+        if node_id not in failed:
+            failed.append(node_id)
+        if len(failed) >= MAX_TYPED_FAILURES:
+            break
+
+    errors: list[str] = []
+    for match in _ERROR_RE.finditer(output):
+        name = match.group(1)
+        if name not in errors:
+            errors.append(name)
+        if len(errors) >= MAX_ERROR_TYPES:
+            break
+
+    counts = {"failed": 0, "passed": 0, "errors": 0}
+    # Pytest's final summary is near the end; scan simple count tokens there rather
+    # than depending on one exact version-specific line shape.
+    tail = output[-1200:]
+    for key, pattern in (
+        ("failed", r"(\d+)\s+failed"),
+        ("passed", r"(\d+)\s+passed"),
+        ("errors", r"(\d+)\s+errors?"),
+    ):
+        matches = re.findall(pattern, tail, re.IGNORECASE)
+        if matches:
+            counts[key] = int(matches[-1])
+
+    return {
+        "status": "passed" if passed else "failed",
+        "counts": counts,
+        "failed_tests": failed,
+        "error_types_found": errors,
+    }
 
 
 class RepositoryContextCompiler(SemanticRepositoryContext):
@@ -140,3 +194,25 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
             sections.append(section)
         packet = "".join(sections)
         return packet[:MAX_CONTEXT_PACKET_CHARS]
+
+
+class CompiledSemanticCyberACIProvider(SemanticCyberACIProvider):
+    """Semantic ACI plus compact typed feedback for pytest observations."""
+
+    def _run_check(self, arguments: dict[str, Any]) -> ToolResult:
+        result = super()._run_check(arguments)
+        profile = str(arguments.get("profile", "")).casefold()
+        if profile != "pytest" or not result.data:
+            return result
+        data = dict(result.data)
+        output = str(data.get("output", ""))
+        typed = _pytest_feedback(output, passed=result.ok)
+        data["typed_feedback"] = typed
+        counts = typed["counts"]
+        if result.ok:
+            summary = f"pytest passed: {counts['passed']} passed"
+        else:
+            failed = ", ".join(typed["failed_tests"][:3]) or "unknown failing node"
+            errors = ", ".join(typed["error_types_found"][:3]) or "no classified exception"
+            summary = f"pytest failed: {failed}; errors={errors}"
+        return ToolResult(result.ok, summary, data)
