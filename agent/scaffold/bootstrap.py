@@ -7,7 +7,6 @@ from pathlib import Path
 
 from agent.core.llm import ModelUsage
 
-from .aci import CyberACIProvider
 from .candidate_arena import CandidateArenaProvider
 from .contracts import KernelLimits, ScaffoldRunResult
 from .extensions import ScaffoldExtension
@@ -16,6 +15,7 @@ from .planner import HybridPlanner
 from .providers import LegacySecurityProvider, WorkspaceFileProvider
 from .registry import ToolBus
 from .security_relevance import SecurityAwareRepositoryDistillerProvider
+from .semantic_namespace import SemanticCyberACIProvider, SemanticRepositoryContext
 from .verifier import LegacyTaskVerifier
 
 
@@ -38,12 +38,22 @@ def build_default_application(
     limits: KernelLimits | None = None,
     extensions: tuple[ScaffoldExtension, ...] = (),
 ) -> ScaffoldApplication:
-    # Distiller and ACI share one cached structural index. Candidate Arena is separate:
-    # it owns private transactional copies and can only promote a deterministic winner.
+    # Distiller, semantic namespace and ACI share one cached structural index.
+    # The task workspace itself is never renamed: only the model-facing names change.
+    # Candidate Arena is separate because it owns private transactional copies and can
+    # only promote a deterministic winner.
     distiller_provider = SecurityAwareRepositoryDistillerProvider(workdir)
+    semantic_context = SemanticRepositoryContext(
+        workdir,
+        distiller=distiller_provider.distiller,
+    )
     providers = [
         distiller_provider,
-        CyberACIProvider(workdir, distiller=distiller_provider.distiller),
+        SemanticCyberACIProvider(
+            workdir,
+            distiller=distiller_provider.distiller,
+            semantic_context=semantic_context,
+        ),
         CandidateArenaProvider(workdir),
         LegacySecurityProvider(workdir),
         WorkspaceFileProvider(workdir),
@@ -61,5 +71,6 @@ def build_default_application(
         verifier=LegacyTaskVerifier(),
         limits=limits,
         extension_guidance="\n".join(guidance),
+        repository_context=semantic_context,
     )
     return ScaffoldApplication(kernel=kernel, planner=planner)
