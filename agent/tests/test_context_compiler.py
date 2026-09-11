@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+import hashlib
+import tempfile
+import unittest
+from pathlib import Path
+
+from agent.scaffold.context_compiler import RepositoryContextCompiler
+from agent.scaffold.security_relevance import SecurityAwareRepositoryDistiller
+
+
+AUTH_BUG_INSTRUCTION = (
+    "There is an authorization bug in this project. Find the root cause, "
+    "make the smallest safe fix, and prove the fix using the existing tests."
+)
+
+
+class RepositoryContextCompilerTests(unittest.TestCase):
+    def test_packet_combines_semantic_readme_contract_and_trusted_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            access = root / "access.py"
+            access.write_text(
+                'def can_delete(user):\n    return user.get("role") != "guest"\n',
+                encoding="utf-8",
+            )
+            (root / "test_access.py").write_text(
+                "from access import can_delete\n\n"
+                "def test_admin_can_delete():\n"
+                '    assert can_delete({"role": "admin"})\n\n'
+                "def test_viewer_cannot_delete():\n"
+                '    assert not can_delete({"role": "viewer"})\n',
+                encoding="utf-8",
+            )
+            distiller = SecurityAwareRepositoryDistiller(root)
+            compiler = RepositoryContextCompiler(root, distiller=distiller)
+
+            packet = compiler.task_guide(AUTH_BUG_INSTRUCTION)
+            expected_sha = hashlib.sha256(access.read_bytes()).hexdigest()
+
+            self.assertIn("# REPO_GUIDE.md (virtual; model-only)", packet)
+            self.assertIn("authz__can_delete__impl.py", packet)
+            self.assertIn("CONTRACT=can_delete(role=admin)=>true", packet)
+            self.assertIn("# TRUSTED_SOURCE_WINDOWS", packet)
+            self.assertIn(f"SHA256={expected_sha}", packet)
+            self.assertIn('2 |     return user.get("role") != "guest"', packet)
+            self.assertLessEqual(len(packet), 10_000)
+
+    def test_packet_refreshes_sha_after_source_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            access = root / "access.py"
+            access.write_text("def allowed():\n    return False\n", encoding="utf-8")
+            distiller = SecurityAwareRepositoryDistiller(root)
+            compiler = RepositoryContextCompiler(root, distiller=distiller)
+
+            before = compiler.task_guide("Fix the access permission bug")
+            access.write_text("def allowed():\n    return True\n", encoding="utf-8")
+            after = compiler.task_guide("Fix the access permission bug")
+
+            self.assertNotEqual(before, after)
+            self.assertIn(hashlib.sha256(access.read_bytes()).hexdigest(), after)
+
+
+if __name__ == "__main__":
+    unittest.main()
