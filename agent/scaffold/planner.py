@@ -15,6 +15,7 @@ from .contracts import PlanDecision, PlanningContext, PlanStrategy
 
 MAX_STATE_CHARS = 24_000
 MAX_GUIDANCE_CHARS = 8_000
+MAX_REPO_GUIDE_CHARS = 6_000
 FORBIDDEN_MODEL_OWNED_EVIDENCE_KEYS = frozenset(
     {"observation", "evidence", "facts", "confirmed_facts", "tool_result"}
 )
@@ -197,6 +198,8 @@ class LazyLocalModelPlanner:
                 else None
             ),
         }
+        if context.repository_guide:
+            state["repository_guide"] = context.repository_guide[:MAX_REPO_GUIDE_CHARS]
         encoded_state = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
         if len(encoded_state) > MAX_STATE_CHARS:
             encoded_state = encoded_state[:MAX_STATE_CHARS] + "…"
@@ -210,7 +213,11 @@ class LazyLocalModelPlanner:
             "fields and never invent tool output. Prefer the lowest capability level that can "
             "discriminate the current hypothesis. If task_state.recovery_required is true, materially "
             "change the hypothesis, tool family, or capability level instead of repeating the same probe. "
-            "For repository work, use the compact ACI whenever it can answer the question: "
+            "The user state may contain a virtual REPO_GUIDE.md. Its Fxxx handles and semantic paths are "
+            "runtime aliases for real workspace files; use them directly in path arguments when useful. "
+            "The guide is deterministic localization metadata, not vulnerability proof: source/tool/validator "
+            "output remains authoritative. Do not spend extra calls rediscovering filenames already localized "
+            "by the guide. For repository work, use the compact ACI whenever it can answer the question: "
             "search_surface for ranked natural-language localization, then view_window for a bounded "
             "numbered view. For a single obvious high-confidence edit, pass the exact SHA-256 from "
             "view_window into checked_edit; stale-SHA and static-parse rejection are authoritative. "
@@ -221,12 +228,15 @@ class LazyLocalModelPlanner:
             "pytest produce deterministic scores. If arena_evaluate returns a winner, use arena_promote; "
             "only that winner may mutate the real workspace and promotion fails if source files changed "
             "since evaluation. Never merge candidate patches or manually promote a losing branch. "
-            "After any mutation, use the reopened ACI view and run_check to prove syntax/tests before finish. "
+            "After a successful model-driven mutation, the runtime automatically runs the deterministic "
+            "final validation gate. Do not spend a separate action on pytest, git-diff, or finish merely "
+            "to prove a successful edit; if automatic validation fails, use its feedback to recover. "
             "Repository Distiller remains available for structure: rank_relevant_files for unknown file "
             "location, repo_tree for architecture, repo_skeleton for compact signatures, and inspect_symbol "
             "for focused source plus references. Legacy read_file/search_text/apply_patch/run_command are "
             "fallback interfaces only when the compact ACI or Candidate Arena cannot express the operation. "
-            "Use finish only when the result is ready for deterministic verification.\n\n"
+            "Use finish only when the result is ready for deterministic verification and no automatic "
+            "post-mutation validation is pending.\n\n"
             + context.task_playbook[:MAX_GUIDANCE_CHARS]
             + "\n\nValidation guidance:\n"
             + context.validation_playbook[:MAX_GUIDANCE_CHARS]
