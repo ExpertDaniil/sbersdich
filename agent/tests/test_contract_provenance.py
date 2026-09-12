@@ -20,6 +20,7 @@ from agent.scaffold.semantic_namespace import SemanticCyberACIProvider
 from agent.scaffold.verifier import LegacyTaskVerifier
 from agent.strategies import classify_instruction
 from agent.tools.binary_records import carve_records
+from agent.tools.event_table import event_table
 from agent.validators import ArtifactRule, capture_snapshot, validate_artifact
 
 
@@ -188,6 +189,56 @@ class ContractProvenanceTests(unittest.TestCase):
         for change in ({"magic_hex": ""}, {"header_format": "@BH"}, {"header_format": ">99999s"}, {"length_field": True}, {"max_records": 0}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 carve_records(b"AB\x01\x00\x00", **(base | change))
+
+    def test_byte_width_record_schema_and_invalid_schema_feedback(self):
+        raw = b"xEVT1" + struct.pack(">BH", 7, 3) + b"abc"
+        parsed = carve_records(
+            raw,
+            magic_hex=b"EVT1".hex(),
+            field_sizes=[1, 2],
+            byte_order="big",
+            length_field=1,
+        )
+        self.assertEqual(parsed["layout"], [
+            {"field": 0, "width_bytes": 1},
+            {"field": 1, "width_bytes": 2},
+        ])
+        self.assertEqual(parsed["valid_count"], 1)
+        self.assertEqual(parsed["records"][0]["payload_offset"], 8)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "records.bin").write_bytes(raw)
+            result = SecurityToolRegistry(root).execute(
+                AgentAction("binary_records", {
+                    "path": "records.bin",
+                    "magic_hex": b"EVT1".hex(),
+                    "field_sizes": [1, 1, 2],
+                    "byte_order": "big",
+                    "length_field": 2,
+                }),
+                classify_instruction("Recover the CTF flag"),
+            )
+            self.assertFalse(result.ok)
+            self.assertIn("correct the schema", result.summary)
+            self.assertEqual(result.data["valid_count"], 0)
+
+    def test_event_table_applies_fast_clock_only_inside_recorded_interval(self):
+        raw = (
+            b'{"ts":"2026-08-17T10:06:50Z","session":"s-91"}\n'
+            b'{"ts":"2026-08-17T11:00:00Z","session":"later"}\n'
+        )
+        result = event_table(
+            raw,
+            time_field="ts",
+            clock_offset_seconds=90,
+            offset_start="2026-08-17T10:05:00Z",
+            offset_end="2026-08-17T10:10:00Z",
+        )
+        self.assertEqual(result["rows"][0]["utc"], "2026-08-17T10:05:20Z")
+        self.assertEqual(result["rows"][0]["offset_applied_seconds"], 90)
+        self.assertEqual(result["rows"][1]["utc"], "2026-08-17T11:00:00Z")
+        self.assertEqual(result["rows"][1]["offset_applied_seconds"], 0)
 
 
 if __name__ == "__main__":

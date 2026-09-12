@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.core.models import ToolResult
+from agent.strategies import classify_instruction
 
 from .semantic_namespace import (
     SemanticCyberACIProvider,
@@ -133,6 +134,8 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
         if len(raw_guide) > MAX_BASE_GUIDE_CHARS:
             guide += "\n... semantic index truncated; use search_surface for lower-ranked files ..."
         snapshot = self.distiller.snapshot()
+        data_task = classify_instruction(instruction).mode in {"forensics", "ctf"}
+        file_limit = 8 if data_task else MAX_SOURCE_FILES
         # Format documentation can be the decisive input for data tasks. Generic
         # security ranking deliberately downranks docs, so honor explicit mentions.
         selected_paths = [item.path for item in snapshot.files
@@ -148,7 +151,7 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
                 if item is None or item.text is None or _is_test_path(path) or self.is_task_output(path) or path in selected_paths:
                     continue
                 selected_paths.append(path)
-                if len(selected_paths) >= MAX_SOURCE_FILES:
+                if len(selected_paths) >= file_limit:
                     break
         except (OSError, UnicodeError, ValueError, RuntimeError):
             selected_paths = []
@@ -158,8 +161,17 @@ class RepositoryContextCompiler(SemanticRepositoryContext):
                 if item.text is None or _is_test_path(item.path) or self.is_task_output(item.path) or not item.symbols:
                     continue
                 selected_paths.append(item.path)
-                if len(selected_paths) >= MAX_SOURCE_FILES:
+                if len(selected_paths) >= file_limit:
                     break
+
+        if data_task:
+            # Small data cases can have several critical sources and no code
+            # symbols. Fill the bounded packet rather than cutting off at 3 files.
+            for item in snapshot.files:
+                if (item.text is not None and not _is_test_path(item.path)
+                        and not self.is_task_output(item.path) and item.path not in selected_paths
+                        and len(selected_paths) < file_limit):
+                    selected_paths.append(item.path)
 
         sections: list[str] = [guide]
         if selected_paths:

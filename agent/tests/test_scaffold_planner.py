@@ -30,6 +30,20 @@ class PlannerJsonExtractionTests(unittest.TestCase):
         )
         self.assertEqual(payload["name"], "repo_tree")
 
+    def test_ignores_non_action_braces_before_complete_action(self) -> None:
+        payload = _extract_json_object(
+            'Thinking about {not valid} and {"path":"not-an-action"}.\n'
+            '{"rationale":"inspect","name":"repo_tree","arguments":{}}'
+        )
+        self.assertEqual(payload["name"], "repo_tree")
+
+    def test_rejects_nested_arguments_from_truncated_outer_action(self) -> None:
+        with self.assertRaisesRegex(ModelRequestError, "no complete action object"):
+            _extract_json_object(
+                '{"rationale":"too long","name":"ctf_transform","arguments":'
+                '{"path":"records.bin","steps":[{"operation":"zlib"}]}'
+            )
+
     def test_rejects_multiple_objects(self) -> None:
         with self.assertRaisesRegex(ModelRequestError, "multiple JSON objects"):
             _extract_json_object(
@@ -38,7 +52,7 @@ class PlannerJsonExtractionTests(unittest.TestCase):
             )
 
     def test_rejects_no_object(self) -> None:
-        with self.assertRaisesRegex(ModelRequestError, "expected one JSON object"):
+        with self.assertRaisesRegex(ModelRequestError, "no complete action object"):
             _extract_json_object("I cannot decide what to do next")
 
 

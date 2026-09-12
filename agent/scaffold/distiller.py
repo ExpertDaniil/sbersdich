@@ -65,7 +65,7 @@ TEXT_EXTENSIONS = frozenset(
     {
         ".c", ".cc", ".cfg", ".conf", ".cpp", ".cs", ".css", ".go",
         ".h", ".hh", ".hpp", ".htm", ".html", ".ini", ".java", ".js",
-        ".json", ".jsx", ".kt", ".kts", ".md", ".php", ".py", ".rb",
+        ".json", ".jsonl", ".jsx", ".kt", ".kts", ".log", ".md", ".php", ".py", ".rb",
         ".rs", ".scala", ".sh", ".sql", ".toml", ".ts", ".tsx", ".txt",
         ".xml", ".yaml", ".yml",
     }

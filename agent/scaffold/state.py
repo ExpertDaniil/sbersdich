@@ -58,7 +58,9 @@ class HypothesisNode:
             "statement": self.statement,
             "confidence": round(self.confidence, 3),
             "parent_id": self.parent_id,
-            "status": self.status,
+            # Do not collide with the root run "status" consumed by benchmark
+            # adapters that flatten JSON fields.
+            "hypothesis_status": self.status,
             "attempts": self.attempts,
             "last_step": self.last_step,
             "expected_evidence": self.expected_evidence,
@@ -112,6 +114,8 @@ class AgentState:
         self._planner_feedback: str | None = None
         self._evidence_sequence = 0
         self._latest_by_path: dict[str, dict[str, Any]] = {}
+        self._listed_files: set[str] = set()
+        self._read_files: set[str] = set()
 
     def record_planner_error(self, reason: str) -> None:
         self._planner_feedback = _bounded(reason, 900)
@@ -251,6 +255,15 @@ class AgentState:
             tool_result=result,
         )
         self.events.append(event)
+        if result.ok:
+            if action.name == "list_files":
+                self._listed_files.update(str(item["path"]) for item in result.data.get("entries", [])
+                                          if isinstance(item, dict) and "path" in item)
+                self._listed_files = set(sorted(self._listed_files)[:512])
+            if action.name in {"read_file", "view_window", "read_events", "read_bytes"}:
+                path = result.data.get("source_path", result.data.get("path"))
+                if isinstance(path, str):
+                    self._read_files.add(path)
         self._record_evidence(
             sequence=sequence,
             source="tool",
@@ -345,6 +358,8 @@ class AgentState:
             "last_control_feedback": self._last_control_feedback,
             "planner_feedback": self._planner_feedback,
             "latest_by_path": list(self._latest_by_path.values()),
+            "inventory_not_opened_by_tools": sorted(self._listed_files - self._read_files)[:32],
+            "inventory_note": "These listed files have no explicit read action; source windows may also show content. A partial read is not complete investigation.",
             "capability_ladder": [
                 {"level": level, "tools": sorted(names)}
                 for level, names in sorted(ladder.items())

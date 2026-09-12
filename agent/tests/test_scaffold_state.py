@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import unittest
 
 from agent.core.models import AgentAction, ToolResult
-from agent.scaffold.contracts import PlanDecision, PlanStrategy
+from agent.scaffold.contracts import PlanDecision, PlanStrategy, ScaffoldRunResult
 from agent.scaffold.state import AgentState
 
 
@@ -57,7 +58,53 @@ class ScaffoldStateTests(unittest.TestCase):
         state.register_plan(PlanDecision(action, hypothesis="tests reproduce the bug"), step=1)
         state.record_tool_event(1, action, ToolResult(False, "test failed to start"))
         snapshot = state.snapshot(())
-        self.assertEqual(snapshot["hypotheses"][0]["status"], "challenged")
+        self.assertEqual(
+            snapshot["hypotheses"][0]["hypothesis_status"], "challenged"
+        )
+        self.assertNotIn("status", snapshot["hypotheses"][0])
+
+    def test_inventory_tracks_files_that_have_not_been_opened(self):
+        state = AgentState("correlate all evidence", "forensics")
+        state.record_tool_event(
+            1,
+            AgentAction("list_files", {"path": "evidence"}),
+            ToolResult(
+                True,
+                "listed evidence",
+                {"entries": [{"path": "evidence/auth.jsonl"},
+                              {"path": "evidence/app.jsonl"}]},
+            ),
+        )
+        state.record_tool_event(
+            2,
+            AgentAction("read_file", {"path": "evidence/auth.jsonl"}),
+            ToolResult(True, "read auth", {"path": "evidence/auth.jsonl"}),
+        )
+
+        snapshot = state.snapshot(())
+
+        self.assertEqual(
+            snapshot["inventory_not_opened_by_tools"], ["evidence/app.jsonl"]
+        )
+
+    def test_run_status_is_the_last_serialized_status_field(self):
+        result = ScaffoldRunResult(
+            status="failed",
+            reason="not complete",
+            decision=None,
+            steps_used=1,
+            validations_used=0,
+            events=(),
+            final_validation=None,
+            state={"legacy_nested": {"status": "challenged"}},
+        )
+
+        payload = result.as_payload()
+        encoded = json.dumps(payload)
+
+        self.assertEqual(list(payload)[-1], "status")
+        self.assertGreater(encoded.rfind('"status": "failed"'),
+                           encoded.rfind('"status": "challenged"'))
 
 
 if __name__ == "__main__":

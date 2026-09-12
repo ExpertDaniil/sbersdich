@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from agent.strategies import StrategyDecision
 from agent.tools.binary_records import carve_records
+from agent.tools.event_table import event_table
 from agent.tools.ctf import transform_ctf_bytes, transform_ctf_data
 from agent.tools.forensics import (
     analyze_incident,
@@ -47,7 +48,7 @@ WRITE_ACTIONS = frozenset({"apply_patch", "run_command"})
 MODE_ACTIONS = {
     "audit": READ_ACTIONS | {"security_scan"},
     "fix": READ_ACTIONS | WRITE_ACTIONS | {"security_scan", "sql_parameterize"},
-    "forensics": READ_ACTIONS | {"forensics_analyze"},
+    "forensics": READ_ACTIONS | {"read_events", "forensics_analyze"},
     "ctf": READ_ACTIONS | {"binary_records", "ctf_transform", "write_exact_text"},
     "general": READ_ACTIONS | WRITE_ACTIONS | {"write_exact_text"},
 }
@@ -59,6 +60,7 @@ TOOL_ORDER = (
     "security_scan",
     "sql_parameterize",
     "forensics_analyze",
+    "read_events",
     "binary_records",
     "ctf_transform",
     "write_exact_text",
@@ -109,11 +111,22 @@ TOOL_DEFINITIONS = {
         {"target": "string=.", "output": "string=incident_report.txt"},
         True,
     ),
+    "read_events": ToolDefinition(
+        "read_events",
+        "Read a bounded JSONL event table and compute UTC from explicit clock offsets. Positive offset means clock fast: UTC=recorded-offset. Does not select malicious events or infer correlations.",
+        {"path": "string", "time_field": "string; existing timestamp key in each JSONL object",
+         "clock_offset_seconds": "integer=0; positive fast, negative slow; max absolute 86400",
+         "offset_start": "optional ISO8601 with timezone; recorded-clock start, inclusive; requires offset_end",
+         "offset_end": "optional ISO8601 with timezone; recorded-clock end, inclusive; requires offset_start",
+         "start_line": "integer=1", "max_rows": "integer=50; maximum 100"},
+    ),
     "binary_records": ToolDefinition(
         "binary_records",
         "Locate binary records using the documented magic and integer header. Read format documentation first. Returns exact payload offsets/lengths and all header values; select the configured kind yourself.",
         {"path": "string", "magic_hex": "hex string; 1..64 bytes",
-         "header_format": "struct format AFTER magic: < or > or ! then 1..16 integer fields bBhHiIqQ; e.g. >BH = big-endian uint8,uint16",
+         "field_sizes": "preferred integer[] AFTER magic; each width 1,2,4,8 bytes; one entry per field. A kind byte plus two-byte length is [1,2], NOT [1,1,2]",
+         "byte_order": "big (default) or little; used with field_sizes",
+         "header_format": "alternative to field_sizes: explicit struct format; >BH has TWO fields, >BBH has THREE",
          "length_field": "integer; zero-based header field containing payload byte count",
          "max_records": "integer=32; max 64"},
     ),
@@ -179,6 +192,7 @@ class SecurityToolRegistry:
             "security_scan": self._security_scan,
             "sql_parameterize": self._sql_parameterize,
             "forensics_analyze": self._forensics_analyze,
+            "read_events": self._read_events,
             "binary_records": self._binary_records,
             "ctf_transform": self._ctf_transform,
             "write_exact_text": self._write_exact_text,
@@ -388,15 +402,28 @@ class SecurityToolRegistry:
             {"path": str(output), "characters": len(content)},
         )
 
+    def _read_events(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(arguments, {"path", "time_field", "clock_offset_seconds", "offset_start", "offset_end", "start_line", "max_rows"}, "read_events")
+        if not {"path", "time_field"} <= arguments.keys():
+            raise ToolPolicyError("read_events requires path and time_field")
+        path, raw = _read_regular_bytes(self.workdir, arguments["path"])
+        data = event_table(raw, **{key: value for key, value in arguments.items() if key != "path"})
+        data["path"] = path.relative_to(self.workdir).as_posix()
+        return ToolResult(True, f"read {len(data['rows'])} event(s) with explicit UTC correction; correlate source IDs before selecting the requested event", data)
+
     def _binary_records(self, arguments: dict[str, Any]) -> ToolResult:
-        self._only(arguments, {"path", "magic_hex", "header_format", "length_field", "max_records"}, "binary_records")
-        required = {"path", "magic_hex", "header_format", "length_field"}
+        self._only(arguments, {"path", "magic_hex", "header_format", "length_field", "max_records", "field_sizes", "byte_order"}, "binary_records")
+        required = {"path", "magic_hex", "length_field"}
         if not required <= arguments.keys():
-            raise ToolPolicyError("binary_records requires path, magic_hex, header_format, length_field")
+            raise ToolPolicyError("binary_records requires path, magic_hex, length_field and field_sizes OR header_format")
         path, raw = _read_regular_bytes(self.workdir, arguments["path"])
         data = carve_records(raw, **{key: value for key, value in arguments.items() if key != "path"})
         data["path"] = path.relative_to(self.workdir).as_posix()
-        return ToolResult(True, f"located {data['count']} candidate record(s); check valid and configured header fields", data)
+        if not data["valid_count"]:
+            return ToolResult(False, "no valid records for the supplied schema; correct the schema by comparing layout field count/widths "
+                              "with documentation before transforming. Invalid offsets/lengths are NOT usable; "
+                              "do not clamp the declared length to EOF or assume input corruption", data)
+        return ToolResult(True, f"located {data['valid_count']} valid / {data['count']} candidate record(s); select the configured header values", data)
 
     def _ctf_transform(self, arguments: dict[str, Any]) -> ToolResult:
         self._only(arguments, {"value", "steps", "path", "offset", "length"}, "ctf_transform")

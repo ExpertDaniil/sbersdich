@@ -434,7 +434,11 @@ def validate_security_report_payload(payload: Any) -> None:
         raise ValidationError("security report findings must be an array")
     for index, finding in enumerate(findings):
         if not isinstance(finding, dict) or set(finding) != SECURITY_FINDING_FIELDS:
-            raise ValidationError(f"finding {index} requires exactly these non-empty string fields: {sorted(SECURITY_FINDING_FIELDS)}")
+            actual = set(finding) if isinstance(finding, dict) else set()
+            raise ValidationError(
+                f"finding {index} requires exactly these non-empty string fields: {sorted(SECURITY_FINDING_FIELDS)}; "
+                f"missing={sorted(SECURITY_FINDING_FIELDS - actual)}; extra={sorted(actual - SECURITY_FINDING_FIELDS)}"
+            )
         if finding["severity"] not in SECURITY_SEVERITIES:
             raise ValidationError(f"finding {index}.severity must be one of {sorted(SECURITY_SEVERITIES)}")
         for key in SECURITY_FINDING_FIELDS:

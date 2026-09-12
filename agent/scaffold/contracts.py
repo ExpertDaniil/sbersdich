@@ -147,8 +147,10 @@ class ScaffoldRunResult:
         return self.status == "succeeded"
 
     def as_payload(self) -> dict[str, Any]:
+        # Keep the terminal status after nested state/events. Some benchmark
+        # adapters use a deliberately small streaming parser and otherwise pick
+        # a hypothesis' nested "status" field instead of this run status.
         return {
-            "status": self.status,
             "reason": self.reason,
             "decision": asdict(self.decision) if self.decision else None,
             "steps_used": self.steps_used,
@@ -158,4 +160,5 @@ class ScaffoldRunResult:
                 self.final_validation.as_payload() if self.final_validation else None
             ),
             "state": self.state,
+            "status": self.status,
         }

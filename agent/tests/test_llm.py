@@ -118,6 +118,29 @@ class OpenAICompatibleClientTests(unittest.TestCase):
             client.probe()
         self.assertNotIn("super-secret-test-key", str(raised.exception))
 
+    def test_length_truncated_response_is_not_retried(self):
+        calls = 0
+
+        def transport(url, headers, body, timeout):
+            nonlocal calls
+            calls += 1
+            return {
+                "choices": [{
+                    "finish_reason": "length",
+                    "message": {"content": '{"rationale":"too long"'},
+                }],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 9},
+            }
+
+        client = OpenAICompatibleClient(
+            ModelConfig.from_env(valid_env(LOCAL_AGENT_RETRY_COUNT="2")),
+            transport=transport,
+        )
+        with self.assertRaisesRegex(ModelRequestError, "output limit"):
+            client.probe()
+        self.assertEqual(calls, 1)
+        self.assertEqual(client.usage.as_payload()["total_tokens"], 14)
+
 
 class LocalModelActionDriverTests(unittest.TestCase):
     def test_model_json_becomes_one_validated_action(self):

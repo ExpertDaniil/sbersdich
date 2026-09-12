@@ -49,6 +49,14 @@ def _encode_state(state: dict[str, Any]) -> str:
         snapshot["hypotheses"] = [h for h in snapshot.get("hypotheses", []) if h.get("id") == current]
         encoded = encode()
     if len(encoded) > MAX_STATE_CHARS:
+        # Previous full-file writes are duplicated in tool evidence. Discard their
+        # proposed arguments before discarding current source bytes.
+        for event in snapshot.get("recent_events", []):
+            if "action" in event:
+                event["action"].pop("arguments", None)
+                event["action"]["rationale"] = str(event["action"].get("rationale", ""))[:180]
+        encoded = encode()
+    if len(encoded) > MAX_STATE_CHARS:
         # An omitted packet can be fetched again through bounded file tools.
         compact["repository_guide"] = "Source packet omitted for budget; use view_window/read_file."
         encoded = encode()
@@ -86,9 +94,11 @@ def _raw_json_object_at_or_after(
         except json.JSONDecodeError:
             cursor = object_start + 1
             continue
-        if isinstance(payload, dict):
+        if isinstance(payload, dict) and {"name", "arguments"} <= payload.keys():
             return payload, object_start, object_end
-        cursor = object_start + 1
+        # A nested arguments object from a truncated outer response is not an
+        # action. Continue only to find a complete, action-shaped object.
+        cursor = object_end
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -105,7 +115,10 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         embedded = _raw_json_object_at_or_after(stripped)
         if embedded is None:
-            raise ModelRequestError("scaffold planner expected one JSON object")
+            raise ModelRequestError(
+                "planner returned no complete action object; return one JSON object "
+                "with rationale, name and arguments, shorten rationale, and omit optional text"
+            )
         payload, _object_start, object_end = embedded
         if _raw_json_object_at_or_after(stripped, object_end) is not None:
             raise ModelRequestError("scaffold planner returned multiple JSON objects")
@@ -277,7 +290,8 @@ class LazyLocalModelPlanner:
         system = (
             "You are the planning policy for an offline autonomous cybersecurity agent. "
             "Choose exactly one next action. Return only one JSON object. Required keys: "
-            "name, arguments, rationale. Optional planning keys: hypothesis, confidence, "
+            "rationale, name, arguments, in that order. Keep rationale to at most two short sentences; "
+            "resolve any correction BEFORE emitting arguments, and emit no text after the JSON. Optional planning keys: hypothesis, confidence, "
             "expected_evidence, strategy. strategy is one of continue, branch, backtrack, "
             "verify, escalate. The model may propose hypotheses, but observations and evidence "
             "belong only to tools and validators. Never emit observation/evidence/facts/tool_result "
@@ -287,12 +301,23 @@ class LazyLocalModelPlanner:
             "Read planner_feedback and last_control_feedback before retrying. A hypothesis may be a new "
             "statement or an existing Hxx identifier; backtrack must select a different hypothesis. "
             "Correct invalid action names/arguments using available_tools; do not repeat rejected calls. "
-            "Read authoritative format documentation before decoding; use binary_records for exact record offsets. "
+            "Read authoritative format documentation before decoding; use binary_records with explicit field_sizes "
+            "for exact record offsets. Never use a record with valid=false or decode to EOF to bypass its length. "
+            "Compare returned layout widths with the documentation; correct the schema before transforming. "
             "For binary transforms use ctf_transform path+offset+length+steps, never manually copy hex "
             "from read_bytes. Use reverse_bytes for binary reversal, key_text/key_hex for XOR. "
             "On decompression failure check exact byte range and encoding before changing documented order. "
             "security_scan only covers dynamic SQL: its counts do not establish absence of other bugs. "
             "Audit/forensics write_file is restricted to declared artifact paths. "
+            "In forensics, inspect inventory_not_opened_by_tools for missing links. Use read_events to "
+            "compute clock-adjusted UTC from JSONL timestamps. Event selection and clock correction are "
+            "separate: a later request on an accurate clock does not replace the corrected start of a session "
+            "when the instruction asks for that session. Correlate stable session/request IDs before choosing. "
+            "For fixes, when the instruction says an API supports only a documented finite option set, "
+            "reject unsupported options unless a fallback is explicitly required; preserve documented valid "
+            "behavior and distinguish SQL values from identifiers and direction keywords. A terminating "
+            "membership guard followed by interpolation of the guarded token is acceptable structure. "
+            "Changing f-strings to concatenation does not fix SQL injection. "
             "The user state may contain a virtual REPO_GUIDE.md. Its Fxxx handles and semantic paths are "
             "runtime aliases for real workspace files; use them directly in path arguments when useful. "
             "REPO_GUIDE card metadata is localization help, not vulnerability proof. If the packet also "

@@ -277,7 +277,7 @@ class OpenAICompatibleClient:
             except ModelRequestError as error:
                 last_error = error
                 code = getattr(error, "status_code", None)
-                retryable = code is None or code in RETRYABLE_HTTP_CODES
+                retryable = getattr(error, "retryable", True) and (code is None or code in RETRYABLE_HTTP_CODES)
                 if not retryable or attempt >= self.config.retry_count:
                     break
                 delay = min(0.25 * (2**attempt), 1.0)
@@ -301,6 +301,12 @@ class OpenAICompatibleClient:
     def _consume_payload(self, payload: Mapping[str, Any], request_body: bytes) -> str:
         self._record_usage(payload, request_body)
         try:
+            choice = payload["choices"][0]
+            if choice.get("finish_reason") == "length":
+                error = ModelRequestError("model response hit its output limit; return a complete action JSON "
+                                          "with a short rationale and omit optional planning text")
+                error.retryable = False  # resending the identical prompt cannot repair it
+                raise error
             content = payload["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as error:
             raise ModelRequestError("в ответе модели отсутствует choices[0].message.content") from error

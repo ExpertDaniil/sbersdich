@@ -336,8 +336,18 @@ def _finite_block(statements: list[ast.stmt], values: dict[str, frozenset[str]],
             positive = {ast.dump(test.left): choices}
             true_values, false_values = dict(values), dict(values)
             is_in = isinstance(test.ops[0], ast.In)
+            guarded_name: str | None = None
             if isinstance(test.left, ast.Name):
+                guarded_name = test.left.id
                 (true_values if is_in else false_values)[test.left.id] = choices
+            elif all(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", choice) for choice in choices):
+                # A lower/upper membership guard also constrains the original
+                # string to identifier characters: case conversion cannot erase
+                # SQL punctuation/whitespace. Choices represent safe token classes
+                # here, not an assertion that original capitalization is unchanged.
+                subject = test.left.func.value.id
+                guarded_name = subject
+                (true_values if is_in else false_values)[subject] = choices
             left = _finite_block(statement.body, true_values, positive if is_in else {})
             right = _finite_block(statement.orelse, false_values, {} if is_in else positive)
             if left is None and right is None:
@@ -348,6 +358,13 @@ def _finite_block(statements: list[ast.stmt], values: dict[str, frozenset[str]],
                 values = left
             else:
                 values = {key: left[key] | right[key] for key in left.keys() & right.keys()}
+                # When both branches continue, do not certify the original
+                # guarded input merely because one branch substitutes a default.
+                # A distinct mapped output can still be proven finite. This keeps
+                # rejection guards and explicit mappings precise while avoiding
+                # silent fallback as proof of the caller-facing input contract.
+                if guarded_name is not None:
+                    values.pop(guarded_name, None)
             constraints.clear()
         elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
             continue
@@ -431,7 +448,7 @@ def audit_function(
                     "or read or modify database data."
                 ),
                 recommendation=(
-                    "Keep the SQL statement constant and pass every untrusted value "
+                    "Keep SQL values parameterized; for identifiers/directions use a validated literal allowlist or mapping and reject unsupported options. Pass every untrusted value "
                     "through the database driver's parameter placeholders."
                 ),
             )

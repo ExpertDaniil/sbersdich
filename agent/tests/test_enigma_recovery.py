@@ -224,7 +224,7 @@ class SqlAllowlistTests(unittest.TestCase):
     SAFE = '''async def query(conn, field, direction):
     fields = {"title", "priority"}
     if field not in fields:
-        field = "title"
+        raise ValueError("unsupported field")
     if direction.lower() in ("asc", "desc"):
         order = direction.lower()
     else:
@@ -238,7 +238,7 @@ class SqlAllowlistTests(unittest.TestCase):
 
     def test_incomplete_guards_reassignment_and_mutable_allowlists_still_report(self):
         variants = (
-            self.SAFE.replace('field = "title"', 'pass'),
+            self.SAFE.replace('raise ValueError("unsupported field")', 'pass'),
             self.SAFE.replace('order = "desc"', 'order = direction'),
             self.SAFE.replace('    sql =', '    field = direction\n    sql ='),
             self.SAFE.replace('    if field', '    fields.add(field)\n    if field'),
@@ -248,6 +248,45 @@ class SqlAllowlistTests(unittest.TestCase):
         for source in variants:
             with self.subTest(source=source):
                 self.assertTrue(scan_python_source(source, "query.py"))
+
+    def test_terminating_case_insensitive_guards_secure_original_tokens(self):
+        source = '''async def list_events(conn, order_by, direction):
+    if order_by not in ("created_at", "severity", "actor"):
+        raise ValueError("unsupported field")
+    if direction.lower() not in ("asc", "desc"):
+        raise ValueError("unsupported direction")
+    query = f"SELECT id FROM events ORDER BY {order_by} {direction}"
+    return await conn.fetch(query)
+'''
+        self.assertEqual(scan_python_source(source, "repository.py"), [])
+
+    def test_case_guard_does_not_hide_unsafe_choices_or_nonterminating_branch(self):
+        safe = '''async def list_events(conn, direction):
+    if direction.lower() not in ("asc", "desc"):
+        raise ValueError("unsupported")
+    query = f"SELECT id FROM events ORDER BY id {direction}"
+    return await conn.fetch(query)
+'''
+        variants = (
+            safe.replace('"asc", "desc"', '"asc; drop table events", "desc"'),
+            safe.replace('raise ValueError("unsupported")', 'log(direction)'),
+        )
+        for source in variants:
+            with self.subTest(source=source):
+                self.assertTrue(scan_python_source(source, "repository.py"))
+
+    def test_silent_fallback_is_not_used_as_input_contract_proof(self):
+        source = '''async def list_events(conn, order_by, direction):
+    if order_by not in ("created_at", "severity", "actor"):
+        order_by = "created_at"
+    if direction.lower() not in ("asc", "desc"):
+        direction = "desc"
+    query = f"SELECT id FROM events ORDER BY {order_by} {direction}"
+    return await conn.fetch(query)
+'''
+        findings = scan_python_source(source, "repository.py")
+        self.assertTrue(findings)
+        self.assertIn("order_by", findings[0].evidence)
 
     def test_raise_guard_is_supported(self):
         source = self.SAFE.replace('field = "title"', 'raise ValueError("invalid field")')

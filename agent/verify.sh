@@ -19,6 +19,8 @@ run_python -m py_compile \
     agent/core/playbooks.py \
     agent/core/tools.py \
     agent/core/workspace.py \
+    agent/tools/binary_records.py \
+    agent/tools/event_table.py \
     agent/scaffold/__init__.py \
     agent/scaffold/aci.py \
     agent/scaffold/bootstrap.py \

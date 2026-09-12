@@ -80,6 +80,34 @@ class RepositoryContextCompilerTests(unittest.TestCase):
         self.assertEqual(feedback["counts"]["failed"], 1)
         self.assertEqual(feedback["counts"]["passed"], 2)
 
+    def test_small_forensics_packet_includes_every_evidence_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            for name in ("app.jsonl", "auth.jsonl", "storage.jsonl"):
+                (evidence / name).write_text(
+                    '{"ts":"2026-01-01T00:00:00Z","source":"' + name + '"}\n',
+                    encoding="utf-8",
+                )
+            (evidence / "proxy.log").write_text(
+                "2026-01-01T00:00:01Z request=req-1\n", encoding="utf-8"
+            )
+            (evidence / "collector_note.txt").write_text(
+                "auth clock was 90 seconds fast", encoding="utf-8"
+            )
+            compiler = RepositoryContextCompiler(
+                root, distiller=SecurityAwareRepositoryDistiller(root)
+            )
+
+            packet = compiler.task_guide(
+                "Investigate all evidence and write `/app/reports/timeline.json`."
+            )
+
+            for name in ("app.jsonl", "auth.jsonl", "storage.jsonl",
+                         "proxy.log", "collector_note.txt"):
+                self.assertIn("source_path=evidence/" + name, packet)
+
 
 if __name__ == "__main__":
     unittest.main()
