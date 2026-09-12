@@ -44,6 +44,7 @@ run_python -m py_compile \
     agent/tools/security_scan.py \
     agent/tools/sql_parameterize.py \
     agent/tests/test_agent_loop.py \
+    agent/tests/test_adversarial_runtime.py \
     agent/tests/test_audit_fix_tools.py \
     agent/tests/test_forensics_tools.py \
     agent/tests/test_llm.py \

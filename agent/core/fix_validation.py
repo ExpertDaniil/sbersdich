@@ -17,6 +17,11 @@ from agent.validators import (
     ValidationReport, canonical_path, validate_task,
 )
 from .project_checks import ProjectCheckPlan
+from .workspace import (
+    child_process_environment,
+    known_secret_values,
+    redact_known_secrets,
+)
 
 
 PROTECTED_CHECK_FILES = frozenset({"agents.md", "pytest.ini", "conftest.py", "tox.ini", "pytest.py"})
@@ -42,9 +47,8 @@ def run_project_check(spec: CommandSpec, workdir: Path, *, timeout: float) -> Ch
     started = time.monotonic()
     if not spec.argv or not math.isfinite(timeout) or timeout <= 0:
         return CheckResult(spec.name, False, "project-test budget exhausted or command is empty")
-    env = os.environ.copy()
-    for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "LOCAL_AGENT_MODEL", "PYTEST_ADDOPTS"):
-        env.pop(key, None)
+    secrets = known_secret_values()
+    env = child_process_environment()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     options = {"start_new_session": True} if os.name == "posix" else {}
@@ -75,16 +79,19 @@ def run_project_check(spec: CommandSpec, workdir: Path, *, timeout: float) -> Ch
                 raw = output.read(OUTPUT_BYTES // 2)
                 output.seek(-OUTPUT_BYTES // 2, os.SEEK_END)
                 raw += b"\n... [project-test output truncated] ...\n" + output.read(OUTPUT_BYTES // 2)
-            detail = (
+            detail = redact_known_secrets(
                 "argv=" + json.dumps(list(spec.argv), ensure_ascii=False)
                 + f"\nexit_code={exit_code}\n"
                 + (f"timed out after {timeout:.3f}s\n" if timed_out else "")
-                + raw.decode("utf-8", errors="replace")
+                + raw.decode("utf-8", errors="replace"),
+                secrets,
             )
             passed = exit_code == 0 and not timed_out
     except (OSError, subprocess.SubprocessError) as error:
         passed = False
-        detail = f"project test command failed to run: {error}"
+        detail = redact_known_secrets(
+            f"project test command failed to run: {error}", secrets
+        )
     return CheckResult(spec.name, passed, detail, round((time.monotonic() - started) * 1000))
 
 

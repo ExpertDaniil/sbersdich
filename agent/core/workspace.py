@@ -86,14 +86,23 @@ SENSITIVE_ENV_RE = re.compile(
 )
 CONTROL_ENV_NAMES = frozenset(
     {
+        "BASH_ENV",
+        "ENV",
         "GIT_EXTERNAL_DIFF",
         "GIT_CONFIG",
         "GIT_CONFIG_GLOBAL",
         "GIT_CONFIG_SYSTEM",
         "GIT_CONFIG_COUNT",
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_WORK_TREE",
+        "LD_PRELOAD",
         "NODE_OPTIONS",
         "PYTHONHOME",
+        "PYTHONINSPECT",
         "PYTHONPATH",
+        "PYTHONSTARTUP",
         "PYTEST_ADDOPTS",
         "PYTEST_PLUGINS",
         "RUSTC_WRAPPER",
@@ -560,7 +569,7 @@ def _apply_hunks(source: str, patch: FilePatch) -> str:
 def apply_workspace_patch(workdir: Path | str, *, patch: object) -> dict[str, Any]:
     root = canonical_path(workdir)
     file_patches = parse_unified_patch(patch)
-    prepared: list[tuple[Path, bytes, int, int]] = []
+    prepared: list[tuple[Path, bytes, bytes, int, int]] = []
     total_hunks = 0
     for file_patch in file_patches:
         path = resolve_workspace_path(root, file_patch.path, for_write=True)
@@ -579,30 +588,59 @@ def apply_workspace_patch(workdir: Path | str, *, patch: object) -> dict[str, An
         if updated == source:
             raise WorkspaceError(f"patch makes no change: {file_patch.path}")
         prepared.append(
-            (path, updated.encode("utf-8"), stat.S_IMODE(path.stat().st_mode), len(file_patch.hunks))
+            (
+                path,
+                updated.encode("utf-8"),
+                raw,
+                stat.S_IMODE(path.stat().st_mode),
+                len(file_patch.hunks),
+            )
         )
         total_hunks += len(file_patch.hunks)
 
-    temporary_paths: list[tuple[Path, Path]] = []
+    temporary_paths: list[tuple[Path, Path, Path]] = []
+    committed: list[tuple[Path, Path]] = []
     try:
-        for target, content, mode, _ in prepared:
+        for target, content, original, mode, _ in prepared:
             with tempfile.NamedTemporaryFile(
                 mode="wb", prefix=".agent-patch-", dir=target.parent, delete=False
             ) as handle:
                 handle.write(content)
                 temporary = Path(handle.name)
             os.chmod(temporary, mode)
-            temporary_paths.append((target, temporary))
-        for target, temporary in temporary_paths:
-            os.replace(temporary, target)
+            with tempfile.NamedTemporaryFile(
+                mode="wb", prefix=".agent-rollback-", dir=target.parent, delete=False
+            ) as handle:
+                handle.write(original)
+                rollback = Path(handle.name)
+            os.chmod(rollback, mode)
+            temporary_paths.append((target, temporary, rollback))
+        try:
+            for target, temporary, rollback in temporary_paths:
+                os.replace(temporary, target)
+                committed.append((target, rollback))
+        except OSError as commit_error:
+            rollback_errors: list[str] = []
+            for target, rollback in reversed(committed):
+                try:
+                    os.replace(rollback, target)
+                except OSError as rollback_error:
+                    rollback_errors.append(f"{target}: {rollback_error}")
+            if rollback_errors:
+                raise WorkspaceError(
+                    f"patch commit failed: {commit_error}; rollback also failed: "
+                    + "; ".join(rollback_errors)
+                ) from commit_error
+            raise
     finally:
-        for _, temporary in temporary_paths:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
+        for _, temporary, rollback in temporary_paths:
+            for staged in (temporary, rollback):
+                try:
+                    staged.unlink(missing_ok=True)
+                except OSError:
+                    pass
     return {
-        "changed_paths": [path.relative_to(root).as_posix() for path, _, _, _ in prepared],
+        "changed_paths": [path.relative_to(root).as_posix() for path, _, _, _, _ in prepared],
         "file_count": len(prepared),
         "hunk_count": total_hunks,
     }
@@ -716,7 +754,7 @@ def _validate_command_arguments(argv: object, workdir: Path) -> tuple[str, ...]:
     return tuple(normalized_arguments)
 
 
-def _child_environment() -> dict[str, str]:
+def child_process_environment() -> dict[str, str]:
     return {
         key: value
         for key, value in os.environ.items()
@@ -726,16 +764,62 @@ def _child_environment() -> dict[str, str]:
     }
 
 
+def known_secret_values() -> tuple[str, ...]:
+    values = {
+        value
+        for key, value in os.environ.items()
+        if value and len(value) >= 4 and SENSITIVE_ENV_RE.search(key)
+    }
+    return tuple(sorted(values, key=lambda value: (-len(value), value)))
+
+
+def redact_known_secrets(value: str, secrets: tuple[str, ...]) -> str:
+    for secret in secrets:
+        value = value.replace(secret, "[REDACTED]")
+    return value
+
+
+def _bounded_utf8(value: str, limit: int) -> tuple[str, bool]:
+    raw = value.encode("utf-8")
+    if len(raw) <= limit:
+        return value, False
+    return raw[:limit].decode("utf-8", errors="ignore"), True
+
+
 def _terminate_process(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is not None:
         return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
+        process.wait(timeout=0.25)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except (OSError, ProcessLookupError):
+        if process.poll() is not None:
+            return
     try:
         if os.name == "posix":
             os.killpg(process.pid, signal.SIGKILL)
         else:
             process.kill()
     except (OSError, ProcessLookupError):
-        process.kill()
+        if process.poll() is None:
+            process.kill()
+
+
+def _cleanup_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Kill descendants left behind after a successful direct process exit."""
+
+    if os.name != "posix":
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
 
 
 def run_workspace_command(
@@ -782,37 +866,51 @@ def run_workspace_command(
     elif os.name == "nt":
         popen_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     started = time.monotonic()
+    secrets = known_secret_values()
     try:
         process = subprocess.Popen(
             command,
             cwd=command_cwd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=_child_environment(),
+            stderr=subprocess.PIPE,
+            env=child_process_environment(),
             shell=False,
             **popen_options,
         )
     except OSError as error:
         raise WorkspaceError(f"command failed to start: {error}") from error
 
-    captured = bytearray()
-    total_output = 0
+    stdout_captured = bytearray()
+    stderr_captured = bytearray()
+    totals = {"stdout": 0, "stderr": 0}
 
-    def drain_output() -> None:
-        nonlocal total_output
-        assert process.stdout is not None
+    def drain_output(stream, captured: bytearray, name: str) -> None:
         try:
-            while chunk := process.stdout.read(4096):
-                total_output += len(chunk)
+            while chunk := stream.read(4096):
+                totals[name] += len(chunk)
                 remaining = MAX_COMMAND_OUTPUT_BYTES - len(captured)
                 if remaining > 0:
                     captured.extend(chunk[:remaining])
         except (OSError, ValueError):
             return
 
-    reader = threading.Thread(target=drain_output, daemon=True)
-    reader.start()
+    assert process.stdout is not None
+    assert process.stderr is not None
+    readers = (
+        threading.Thread(
+            target=drain_output,
+            args=(process.stdout, stdout_captured, "stdout"),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=drain_output,
+            args=(process.stderr, stderr_captured, "stderr"),
+            daemon=True,
+        ),
+    )
+    for reader in readers:
+        reader.start()
     timed_out = False
     try:
         return_code = process.wait(timeout=timeout)
@@ -821,18 +919,43 @@ def run_workspace_command(
         _terminate_process(process)
         return_code = process.wait(timeout=5)
     finally:
-        reader.join(timeout=5)
-        if process.stdout is not None:
-            process.stdout.close()
+        # A successful test runner can still fork a background child. The child
+        # inherits our private process group, so clean that group before draining
+        # and returning a supposedly final observation.
+        _cleanup_process_group(process)
+        for reader in readers:
+            reader.join(timeout=5)
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
     duration_ms = round((time.monotonic() - started) * 1000)
-    output = bytes(captured).decode("utf-8", errors="replace")
+    stdout = redact_known_secrets(
+        bytes(stdout_captured).decode("utf-8", errors="replace"), secrets
+    )
+    stderr = redact_known_secrets(
+        bytes(stderr_captured).decode("utf-8", errors="replace"), secrets
+    )
+    combined = stdout + (("\nstderr:\n" + stderr) if stderr else "")
+    output, combined_truncated = _bounded_utf8(combined, MAX_COMMAND_OUTPUT_BYTES)
+    stdout_truncated = totals["stdout"] > len(stdout_captured)
+    stderr_truncated = totals["stderr"] > len(stderr_captured)
+    truncated = stdout_truncated or stderr_truncated or combined_truncated
     return {
         "profile": profile,
-        "argv": list(command),
+        "argv": [redact_known_secrets(item, secrets) for item in command],
         "exit_code": return_code,
         "timed_out": timed_out,
         "duration_ms": duration_ms,
+        "stdout": stdout,
+        "stderr": stderr,
+        "stdout_truncated": stdout_truncated,
+        "stderr_truncated": stderr_truncated,
+        "truncated": truncated,
+        "captured_stdout_bytes": len(stdout_captured),
+        "captured_stderr_bytes": len(stderr_captured),
+        "total_stdout_bytes": totals["stdout"],
+        "total_stderr_bytes": totals["stderr"],
         "output": output,
-        "output_truncated": total_output > len(captured),
-        "total_output_bytes": total_output,
+        "output_truncated": truncated,
+        "total_output_bytes": totals["stdout"] + totals["stderr"],
     }

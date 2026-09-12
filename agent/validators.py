@@ -72,6 +72,7 @@ DEPENDENCY_FILES = frozenset(
 MAX_SNAPSHOT_FILES = 4096
 MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024
 MAX_PYTHON_FILE_BYTES = 4 * 1024 * 1024
+MAX_ARTIFACT_BYTES = 1024 * 1024
 MAX_COMMAND_TIMEOUT_SECONDS = 120
 MAX_COMMAND_OUTPUT_CHARS = 4000
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -421,6 +422,11 @@ def read_utf8_file(path: Path) -> str:
     if not path.is_file():
         raise ValidationError(f"artifact is missing: {path}")
     try:
+        size = path.stat().st_size
+        if size > MAX_ARTIFACT_BYTES:
+            raise ValidationError(
+                f"artifact exceeds {MAX_ARTIFACT_BYTES} byte size limit: {path}"
+            )
         return path.read_bytes().decode("utf-8")
     except UnicodeError as error:
         raise ValidationError(f"artifact is not valid UTF-8: {path}") from error

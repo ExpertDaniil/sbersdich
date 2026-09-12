@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
+from agent.core.contracts import map_instruction_path
 from agent.core.ctf_completion import check_ctf_completion
 from agent.core.fix_validation import failed_validation_reason, validate_fix_task
 from agent.core.models import ValidationFeedback
@@ -12,6 +13,67 @@ from agent.tools.security_scan import finding_observation, scan_project
 from agent.validators import CheckResult, ValidationPolicy, validate_task
 
 from .contracts import VerificationContext, VerificationResult
+
+
+def _confirmed_written_paths(context: VerificationContext) -> set[str]:
+    """Return artifact-relative paths proven by successful mutation results."""
+
+    root = context.workdir
+    written: set[str] = set()
+    for event in context.events:
+        action = event.action
+        result = event.tool_result
+        if action is None or result is None or not result.ok:
+            continue
+
+        candidates: list[object] = []
+        if action.name in {"write_file", "append_file", "write_exact_text"}:
+            candidates.append(result.data.get("path"))
+        elif action.name in {"security_scan", "forensics_analyze"}:
+            candidates.append(result.data.get("report"))
+        elif action.name == "checked_edit" and result.data.get("written") is True:
+            candidates.append(result.data.get("source_path", result.data.get("path")))
+        elif action.name in {"apply_patch", "arena_promote"}:
+            if action.name != "arena_promote" or result.data.get("promoted") is True:
+                changed = result.data.get("changed_paths", ())
+                if isinstance(changed, (list, tuple)):
+                    candidates.extend(changed)
+
+        for raw_path in candidates:
+            if not isinstance(raw_path, str) or not raw_path:
+                continue
+            try:
+                path = map_instruction_path(raw_path, root)
+                written.add(path.relative_to(root).as_posix())
+            except (OSError, ValueError, RuntimeError):
+                continue
+    return written
+
+
+def _artifact_freshness_check(context: VerificationContext, report) -> CheckResult:
+    """Reject fixture outputs and require every declared artifact to be written now."""
+
+    root = context.workdir
+    expected = {
+        rule.path.relative_to(root).as_posix()
+        for rule in context.contract.artifacts
+    }
+    changed = set(report.changes.all_paths())
+    written = _confirmed_written_paths(context)
+    stale = sorted(expected - changed)
+    unproven = sorted(expected - written)
+    if stale or unproven:
+        details: list[str] = []
+        if stale:
+            details.append("not produced or changed during this run: " + ", ".join(stale))
+        if unproven:
+            details.append("no successful artifact writer evidence: " + ", ".join(unproven))
+        return CheckResult("artifact-freshness", False, "; ".join(details))
+    return CheckResult(
+        "artifact-freshness",
+        True,
+        f"all {len(expected)} declared artifact(s) are fresh and writer-confirmed",
+    )
 
 
 class LegacyTaskVerifier:
@@ -65,6 +127,16 @@ class LegacyTaskVerifier:
             passed, reason = check_ctf_completion(
                 context.contract, context.events, report
             )
+        elif context.contract.artifacts:
+            freshness = _artifact_freshness_check(context, report)
+            report = replace(
+                report,
+                passed=report.passed and freshness.passed,
+                checks=report.checks + (freshness,),
+            )
+            if not freshness.passed:
+                passed = False
+                reason = "required artifact was not produced by this run: " + freshness.detail
         elif context.decision.mode == "general" and not context.contract.artifacts:
             passed = False
             reason = "general task has no deterministic artifact contract"
