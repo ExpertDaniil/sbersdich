@@ -63,6 +63,28 @@ class RuntimeHypothesisControllerTests(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertEqual(decision.required_strategy, PlanStrategy.BACKTRACK)
 
+    def test_stagnation_allows_materially_new_probe_without_abandoning_hypothesis(self):
+        different_file = self.controller.evaluate(
+            PlanDecision(
+                AgentAction("read", {"path": "next-shard.dat"}),
+                PlanStrategy.CONTINUE,
+                "bug is in parser",
+            ),
+            state_snapshot=self._stagnant_snapshot(),
+            tools=TOOLS,
+        )
+        different_tool = self.controller.evaluate(
+            PlanDecision(
+                AgentAction("analyze", {"target": "app.py"}),
+                PlanStrategy.CONTINUE,
+                "bug is in parser",
+            ),
+            state_snapshot=self._stagnant_snapshot(),
+            tools=TOOLS,
+        )
+        self.assertTrue(different_file.allowed)
+        self.assertTrue(different_tool.allowed)
+
     def test_backtrack_must_change_hypothesis(self):
         decision = self.controller.evaluate(
             PlanDecision(

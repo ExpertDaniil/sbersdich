@@ -1,5 +1,9 @@
 # Дорожная карта ИБ-блока
 
+> Актуальное состояние: этапы C-01…C-16 интегрированы. Production entrypoint —
+> `agent.scaffold.cli`; таблица ниже сохраняет последовательность появления
+> компонентов, а не список будущих работ.
+
 | ID | Статус | Результат |
 |---|---|---|
 | C-01 | готово аналитически | карта шести публичных задач |
@@ -12,8 +16,12 @@
 | C-08 | готово | baseline, policy engine, artifact/syntax/command checks и 18 тестов |
 | C-09 | готово | основной цикл, action protocol, бюджеты, retry и fail-closed |
 | C-10 | готово | bounded filesystem, unified patch, process allowlist и 32 теста |
-| C-11 | следующий | адаптер локальной OpenAI-compatible LLM |
-| C-12…C-16 | запланировано | prompt policy, benchmark и финальный ZIP |
+| C-11 | готово | адаптер локальной OpenAI-compatible LLM и usage accounting |
+| C-12 | готово | prompt policy, bounded state и mode guidance |
+| C-13 | готово | portability/adversarial evaluation |
+| C-14 | готово | CTF contract, byte-safe tools и completion guard |
+| C-15 | готово | frozen project checks и test-integrity gate |
+| C-16 | готово | production scaffold, diagnostics и reproducible ZIP |
 
 ## Выполнено в C-05
 
@@ -111,9 +119,10 @@
 - отдельный каталог action-схем в `DriverContext`, различный для каждого режима;
 - 32 security/integration-теста и публичный runner на временных копиях.
 
-## Ближайший шаг: C-11
+## Текущий цикл улучшения
 
-Реализовать action driver для локального OpenAI-compatible endpoint через
-`LOCAL_AGENT_MODEL`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`: строгий JSON action,
-учёт токенов, bounded history, retry на невалидном ответе и deterministic
-fallback без изменения C-08/C-10 safety-слоя.
+Следующие изменения принимаются только через независимые regressions и полный
+benchmark: расширение intent routing, instruction-native artifact schemas,
+property-based non-SQL guards, compositional CTF/forensics dataflow и снижение
+ложных внутренних success/failure. Hidden answers и task-name branches в runtime
+не допускаются.

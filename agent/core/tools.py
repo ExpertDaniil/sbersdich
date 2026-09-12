@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
 from agent.strategies import StrategyDecision
+from agent.tools.audit_signals import scan_audit_signals
 from agent.tools.binary_records import carve_records
 from agent.tools.event_table import event_table
-from agent.tools.ctf import transform_ctf_bytes, transform_ctf_data
+from agent.tools.ctf import (
+    MAX_TRANSFORM_BYTES,
+    describe_ctf_bytes,
+    transform_ctf_bytes,
+    transform_ctf_data,
+)
 from agent.tools.forensics import (
     analyze_incident,
     ensure_output_outside_evidence,
@@ -18,6 +25,7 @@ from agent.tools.forensics import (
     inventory_digest,
     resolve_incident_directory,
 )
+from agent.tools.dns_exfil import correlate_dns_exfil
 from agent.tools.security_scan import finding_observation, render_report, scan_project
 from agent.tools.sql_parameterize import parameterize_project
 from agent.validators import (
@@ -46,10 +54,12 @@ RESERVED_ACTIONS = frozenset({"finish", "abort"})
 READ_ACTIONS = frozenset({"list_files", "read_file", "read_bytes", "search_text"})
 WRITE_ACTIONS = frozenset({"apply_patch", "run_command"})
 MODE_ACTIONS = {
-    "audit": READ_ACTIONS | {"security_scan"},
+    "audit": READ_ACTIONS | {"security_scan", "audit_signals"},
     "fix": READ_ACTIONS | WRITE_ACTIONS | {"security_scan", "sql_parameterize"},
-    "forensics": READ_ACTIONS | {"read_events", "forensics_analyze"},
-    "ctf": READ_ACTIONS | {"binary_records", "ctf_transform", "write_exact_text"},
+    "forensics": READ_ACTIONS | {
+        "read_events", "forensics_analyze", "dns_exfil_correlate", "ctf_transform"
+    },
+    "ctf": READ_ACTIONS | {"binary_records", "ctf_transform", "ctf_batch_transform", "write_exact_text"},
     "general": READ_ACTIONS | WRITE_ACTIONS | {"write_exact_text"},
 }
 TOOL_ORDER = (
@@ -58,11 +68,14 @@ TOOL_ORDER = (
     "read_bytes",
     "search_text",
     "security_scan",
+    "audit_signals",
     "sql_parameterize",
     "forensics_analyze",
     "read_events",
+    "dns_exfil_correlate",
     "binary_records",
     "ctf_transform",
+    "ctf_batch_transform",
     "write_exact_text",
     "apply_patch",
     "run_command",
@@ -99,6 +112,11 @@ TOOL_DEFINITIONS = {
         {"target": "string=.", "write_report": "boolean=false", "output": "string"},
         True,
     ),
+    "audit_signals": ToolDefinition(
+        "audit_signals",
+        "Locate conservative non-SQL security leads with concrete source lines and CWE hints. Leads require source confirmation and are not automatic findings.",
+        {"target": "string=."},
+    ),
     "sql_parameterize": ToolDefinition(
         "sql_parameterize",
         "Apply supported asyncpg SQL value parameterization.",
@@ -120,6 +138,17 @@ TOOL_DEFINITIONS = {
          "offset_end": "optional ISO8601 with timezone; recorded-clock end, inclusive; requires offset_start",
          "start_line": "integer=1", "max_rows": "integer=50; maximum 100"},
     ),
+    "dns_exfil_correlate": ToolDefinition(
+        "dns_exfil_correlate",
+        "For an explicit DNS domain, deduplicate sequenced resolver queries, order and Base32-decode once, map the client through inventory CSV, and correlate the nearest prior process JSONL event.",
+        {
+            "resolver_path": "string; resolver text log with timestamp, client= and q= fields",
+            "inventory_path": "string; CSV containing ip and host columns",
+            "process_path": "string; JSONL containing ts, src and process fields",
+            "domain": "string; evidence-selected DNS suffix",
+            "client": "optional string; required only when multiple clients match",
+        },
+    ),
     "binary_records": ToolDefinition(
         "binary_records",
         "Locate binary records using the documented magic and integer header. Read format documentation first. Returns exact payload offsets/lengths and all header values; select the configured kind yourself.",
@@ -132,17 +161,27 @@ TOOL_DEFINITIONS = {
     ),
     "ctf_transform": ToolDefinition(
         "ctf_transform",
-        "Transform text OR an exact file byte range. Prefer path/offset/length for binary data.",
+        "Transform text, a complete bounded file, or an exact file byte range without copying encoded bytes through the model.",
         {
             "value": "string; text input, mutually exclusive with path/offset/length",
-            "path": "string; binary source file, requires offset and length; omit value",
+            "path": "string; source file; omit offset/length to transform the complete file up to 4096 bytes",
             "offset": "integer>=0; zero-based first byte",
             "length": "integer=1..4096; exact byte count, short reads fail",
             "steps": 'object[] in recovery order; each {"operation":"base32|base64|'
-            'base64url|hex|url|rot13|reverse|reverse_bytes|xor|gzip|zlib"}; '
+            'base64url|hex|url|rot13|reverse|reverse_bytes|xor|gzip|zlib|strip|split|json_get"}; '
+            'split requires separator:string and index:integer; json_get requires path as dotted string or string/integer array; '
             'xor requires exactly key_text:string OR key_hex:string (never key); '
             'reverse is UTF-8 characters, reverse_bytes is raw bytes; '
             'textual hex requires an initial {"operation":"hex"}',
+        },
+    ),
+    "ctf_batch_transform": ToolDefinition(
+        "ctf_batch_transform",
+        "Read several bounded files in the supplied evidence-derived order, apply the same steps independently to each, then concatenate decoded bytes. Use for manifest-indexed shards; never concatenate encoded strings first.",
+        {
+            "paths": "string[] in final evidence-derived order; 1..32 files, each <=4096 bytes",
+            "steps": "object[] applied independently to every file; same operations as ctf_transform",
+            "final_steps": "optional object[] applied once after decoded byte concatenation",
         },
     ),
     "write_exact_text": ToolDefinition(
@@ -190,11 +229,14 @@ class SecurityToolRegistry:
             "read_bytes": self._read_bytes,
             "search_text": self._search_text,
             "security_scan": self._security_scan,
+            "audit_signals": self._audit_signals,
             "sql_parameterize": self._sql_parameterize,
             "forensics_analyze": self._forensics_analyze,
             "read_events": self._read_events,
+            "dns_exfil_correlate": self._dns_exfil_correlate,
             "binary_records": self._binary_records,
             "ctf_transform": self._ctf_transform,
+            "ctf_batch_transform": self._ctf_batch_transform,
             "write_exact_text": self._write_exact_text,
             "apply_patch": self._apply_patch,
             "run_command": self._run_command,
@@ -333,6 +375,16 @@ class SecurityToolRegistry:
             },
         )
 
+    def _audit_signals(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(arguments, {"target"}, "audit_signals")
+        target = self._analysis_target(arguments.get("target"))
+        data = scan_audit_signals(target)
+        return ToolResult(
+            True,
+            f"non-SQL audit scan produced {data['lead_count']} lead(s); confirm each from source",
+            data,
+        )
+
     def _sql_parameterize(self, arguments: dict[str, Any]) -> ToolResult:
         allowed_keys = {"target"}
         unknown = sorted(set(arguments) - allowed_keys)
@@ -411,6 +463,44 @@ class SecurityToolRegistry:
         data["path"] = path.relative_to(self.workdir).as_posix()
         return ToolResult(True, f"read {len(data['rows'])} event(s) with explicit UTC correction; correlate source IDs before selecting the requested event", data)
 
+    def _dns_exfil_correlate(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(
+            arguments,
+            {"resolver_path", "inventory_path", "process_path", "domain", "client"},
+            "dns_exfil_correlate",
+        )
+        required = {"resolver_path", "inventory_path", "process_path", "domain"}
+        if not required <= set(arguments):
+            raise ToolPolicyError(
+                "dns_exfil_correlate requires resolver_path, inventory_path, process_path and domain"
+            )
+        resolver_path, resolver_raw = _read_regular_bytes(
+            self.workdir, arguments["resolver_path"]
+        )
+        inventory_path, inventory_raw = _read_regular_bytes(
+            self.workdir, arguments["inventory_path"]
+        )
+        process_path, process_raw = _read_regular_bytes(
+            self.workdir, arguments["process_path"]
+        )
+        data = correlate_dns_exfil(
+            resolver_raw=resolver_raw,
+            inventory_raw=inventory_raw,
+            process_raw=process_raw,
+            domain=arguments["domain"],
+            client=arguments.get("client"),
+        )
+        data["sources"] = {
+            "resolver": resolver_path.relative_to(self.workdir).as_posix(),
+            "inventory": inventory_path.relative_to(self.workdir).as_posix(),
+            "process": process_path.relative_to(self.workdir).as_posix(),
+        }
+        return ToolResult(
+            True,
+            "deduplicated and correlated sequenced DNS exfiltration evidence",
+            data,
+        )
+
     def _binary_records(self, arguments: dict[str, Any]) -> ToolResult:
         self._only(arguments, {"path", "magic_hex", "header_format", "length_field", "max_records", "field_sizes", "byte_order"}, "binary_records")
         required = {"path", "magic_hex", "length_field"}
@@ -429,6 +519,18 @@ class SecurityToolRegistry:
         self._only(arguments, {"value", "steps", "path", "offset", "length"}, "ctf_transform")
         if set(arguments) == {"value", "steps"}:
             data = transform_ctf_data(arguments["value"], arguments["steps"])
+        elif set(arguments) == {"path", "steps"}:
+            path, raw = _read_regular_bytes(self.workdir, arguments["path"])
+            if not raw or len(raw) > MAX_TRANSFORM_BYTES:
+                raise ToolPolicyError(
+                    f"complete transform source must contain 1..{MAX_TRANSFORM_BYTES} bytes"
+                )
+            data = transform_ctf_bytes(raw, arguments["steps"])
+            data["source"] = {
+                "path": path.relative_to(self.workdir).as_posix(),
+                "offset": 0,
+                "length": len(raw),
+            }
         elif set(arguments) == {"path", "offset", "length", "steps"}:
             source = read_workspace_bytes(
                 self.workdir, path=arguments["path"],
@@ -442,10 +544,81 @@ class SecurityToolRegistry:
                 "length": source["bytes_read"],
             }
         else:
-            raise ToolPolicyError("ctf_transform requires value+steps OR path+offset+length+steps")
+            raise ToolPolicyError(
+                "ctf_transform requires value+steps, path+steps, OR path+offset+length+steps"
+            )
         return ToolResult(
             True,
             f"applied {len(data['operations'])} bounded CTF transform(s)",
+            data,
+        )
+
+    def _ctf_batch_transform(self, arguments: dict[str, Any]) -> ToolResult:
+        self._only(arguments, {"paths", "steps", "final_steps"}, "ctf_batch_transform")
+        if not {"paths", "steps"} <= set(arguments):
+            raise ToolPolicyError("ctf_batch_transform requires paths and steps")
+        paths = arguments["paths"]
+        if not isinstance(paths, list) or not 1 <= len(paths) <= 32 or not all(
+            isinstance(path, str) and path for path in paths
+        ):
+            raise ToolPolicyError("paths must be an array of 1..32 non-empty strings")
+        if len(set(paths)) != len(paths):
+            raise ToolPolicyError(
+                "paths must not repeat a shard; derive one ordered entry per manifest index"
+            )
+
+        decoded: list[bytes] = []
+        components: list[dict[str, Any]] = []
+        input_digest = hashlib.sha256()
+        input_size = 0
+        resolved_paths: set[Path] = set()
+        for raw_path in paths:
+            path, raw = _read_regular_bytes(self.workdir, raw_path)
+            if path in resolved_paths:
+                raise ToolPolicyError(
+                    "paths resolve to a duplicate shard; use every evidence file once"
+                )
+            resolved_paths.add(path)
+            if not raw or len(raw) > MAX_TRANSFORM_BYTES:
+                raise ToolPolicyError(
+                    f"each batch source must contain 1..{MAX_TRANSFORM_BYTES} bytes"
+                )
+            input_size += len(raw)
+            input_digest.update(len(raw).to_bytes(8, "big"))
+            input_digest.update(raw)
+            transformed = transform_ctf_bytes(raw, arguments["steps"])
+            output = bytes.fromhex(transformed["hex"])
+            decoded.append(output)
+            components.append(
+                {
+                    "path": path.relative_to(self.workdir).as_posix(),
+                    "input_sha256": transformed["input_sha256"],
+                    "output_sha256": transformed["sha256"],
+                    "output_size_bytes": transformed["size_bytes"],
+                    "operations": transformed["operations"],
+                }
+            )
+        combined = b"".join(decoded)
+        if len(combined) > MAX_TRANSFORM_BYTES:
+            raise ToolPolicyError(
+                f"concatenated decoded output exceeds {MAX_TRANSFORM_BYTES} bytes"
+            )
+        final_steps = arguments.get("final_steps")
+        if final_steps is not None:
+            data = transform_ctf_bytes(combined, final_steps)
+            operations = ["batch-each:" + ",".join(components[0]["operations"]), *data["operations"]]
+            data["operations"] = operations
+        else:
+            data = describe_ctf_bytes(
+                combined,
+                input_size_bytes=input_size,
+                input_sha256=input_digest.hexdigest(),
+                operations=["batch-each:" + ",".join(components[0]["operations"]), "concat-decoded"],
+            )
+        data["components"] = components
+        return ToolResult(
+            True,
+            f"transformed and concatenated {len(components)} ordered file(s)",
             data,
         )
 

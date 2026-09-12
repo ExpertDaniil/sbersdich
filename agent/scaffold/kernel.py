@@ -191,6 +191,7 @@ class AgentKernel:
                 decision,
                 self.limits.max_capability,
                 tuple(rule.path for rule in contract.artifacts),
+                contract.security_requirements,
             )
             tools = self.tool_bus.catalog(execution_context)
             allowed = {tool.name for tool in tools} | RESERVED_ACTIONS

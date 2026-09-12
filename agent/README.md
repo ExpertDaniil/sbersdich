@@ -1,9 +1,8 @@
 # Agent source
 
-Здесь находится переносимая часть будущего автономного агента. На этапах
-C-06/C-07 реализованы:
+Здесь находится переносимая production-часть автономного агента:
 
-- детерминированная классификация задач `audit`, `fix`, `forensics` и `general`;
+- детерминированная классификация задач `audit`, `fix`, `forensics`, `ctf` и `general`;
 - AST-аудитор Python-кода для поиска tainted SQL-конструкций;
 - ограниченный исправитель SQL-инъекций для поддерживаемых вызовов asyncpg;
 - playbook для режима аудита без изменения проекта;
@@ -16,6 +15,12 @@ C-06/C-07 реализованы:
   повторной валидацией и детерминированным fallback-драйвером;
 - bounded `list/read/read-bytes/search`, безопасный unified patch и allowlisted
   process runner без shell-интерпретации.
+- instruction-native JSON contracts, включая exact nested item schema;
+- semantic Repository Distiller/ACI, SHA-guarded checked edits и Candidate Arena;
+- non-SQL audit leads и instruction-derived post-edit security guards;
+- binary carving, structured JWT transforms, ordered batch shards и DNS
+  exfiltration correlation;
+- автоматическая финальная проверка после подтверждённой mutation/artifact write.
 
 Проверка компонентов:
 
@@ -30,9 +35,8 @@ python3 -m agent.strategies "Find security vulnerabilities and write a report"
 python3 -m agent.tools.forensics inventory /app/incident
 python3 -m agent.tools.forensics analyze /app
 python3 -m agent.validators snapshot /app --output /tmp/task-baseline.json
-python3 -m agent.core.loop 'Audit /app and write security_report.json' --workdir /app
+python3 -m agent.scaffold.cli 'Audit /app and write security_report.json' --workdir /app
 ```
 
-Адаптер локальной LLM и финальный `run.sh` будут добавлены на следующих этапах.
-Учебные решения из
+Корневой `run.sh` запускает этот scaffold независимо от текущего cwd. Учебные решения из
 `security/tasks/` не копируются в submission.

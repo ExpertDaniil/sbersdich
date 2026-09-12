@@ -24,6 +24,40 @@ FORBIDDEN_MODEL_OWNED_EVIDENCE_KEYS = frozenset(
 )
 
 
+def _artifact_rule_payload(rule) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "path": str(rule.path),
+        "kind": rule.kind,
+        "required_keys": list(rule.required_keys),
+        "nonempty_findings": rule.nonempty_findings,
+    }
+    if rule.kind != "security-report":
+        return payload
+    if rule.array_item_key and rule.item_required_keys:
+        types = {key: "non-empty string" for key in rule.item_string_keys}
+        types.update({key: "positive integer" for key in rule.item_integer_keys})
+        payload["schema"] = {
+            "top_level_keys": list(rule.required_keys),
+            "array_key": rule.array_item_key,
+            "item_fields": list(rule.item_required_keys),
+            "field_types": types,
+            "field_enums": {key: list(values) for key, values in rule.item_enums},
+            "field_patterns": {key: pattern for key, pattern in rule.item_patterns},
+            "extra_fields_allowed": False,
+            "source": "task_instruction",
+        }
+    else:
+        payload["schema"] = {
+            "top_level_keys": ["findings"],
+            "findings": "array of objects",
+            "finding_fields": sorted(SECURITY_FINDING_FIELDS),
+            "field_types": "all fields are non-empty strings; no extra fields",
+            "severity_values": sorted(SECURITY_SEVERITIES),
+            "source": "generic_fallback",
+        }
+    return payload
+
+
 def _encode_state(state: dict[str, Any]) -> str:
     """Drop optional history structurally; never send sliced, invalid JSON.
 
@@ -216,13 +250,20 @@ class DeterministicFastPath:
         if context.decision.mode == "audit":
             scans = [event.tool_result for event in context.events
                      if event.action and event.action.name == "security_scan" and event.tool_result]
-            if scans:
-                # SQL findings are leads, never proof of audit completeness.
-                return None
-            return PlanDecision(
-                action=AgentAction("security_scan", {"write_report": False}),
-                strategy=PlanStrategy.DETERMINISTIC,
-            )
+            if not scans:
+                return PlanDecision(
+                    action=AgentAction("security_scan", {"write_report": False}),
+                    strategy=PlanStrategy.DETERMINISTIC,
+                )
+            signal_scans = [event.tool_result for event in context.events
+                            if event.action and event.action.name == "audit_signals" and event.tool_result]
+            if not signal_scans and any(tool.name == "audit_signals" for tool in context.tools):
+                return PlanDecision(
+                    action=AgentAction("audit_signals", {}),
+                    strategy=PlanStrategy.DETERMINISTIC,
+                )
+            # Scanner output consists of leads, never proof of audit completeness.
+            return None
         if context.decision.mode == "forensics" and any(
             rule.kind != "incident-report" for rule in context.contract.artifacts
         ):
@@ -271,15 +312,9 @@ class LazyLocalModelPlanner:
             "task_state": context.state_snapshot,
             "artifacts": [str(rule.path) for rule in context.contract.artifacts],
             "artifact_rules": [
-                {"path": str(rule.path), "kind": rule.kind,
-                 "required_keys": list(rule.required_keys), "nonempty_findings": rule.nonempty_findings,
-                 **({"schema": {"top_level_keys": ["findings"], "findings": "array of objects",
-                                 "finding_fields": sorted(SECURITY_FINDING_FIELDS),
-                                 "field_types": "all fields are non-empty strings; no extra fields",
-                                 "severity_values": sorted(SECURITY_SEVERITIES)}}
-                    if rule.kind == "security-report" else {})}
-                for rule in context.contract.artifacts
+                _artifact_rule_payload(rule) for rule in context.contract.artifacts
             ],
+            "security_requirements": list(context.contract.security_requirements),
             "last_validation": (
                 {
                     "passed": context.last_validation.passed,
@@ -302,25 +337,38 @@ class LazyLocalModelPlanner:
             "audit": (
                 "A TRUSTED_SOURCE_WINDOW marked LINES=1-N/N already contains the complete file. If it shows the "
                 "required source-to-sink chain, write the report directly; do not spend read_file and view_window "
-                "calls fetching the same bytes again. "
+                "calls fetching the same bytes again. audit_signals returns localization leads with CWE hints; "
+                "confirm reachability from source and report every distinct real vulnerability once. The exact "
+                "task_instruction schema in artifact_rules is authoritative; never rename its fields to a generic schema. "
             ),
             "ctf": (
                 "Read authoritative format documentation before decoding. Use binary_records with explicit "
                 "field_sizes and compare its layout with the documentation. Never use valid=false records or "
                 "clamp a declared length to EOF. Use ctf_transform path+offset+length+steps; use reverse_bytes "
-                "for reversal and key_text/key_hex for XOR. On decompression failure recheck range and order. "
+                "for reversal and key_text/key_hex for XOR. For JWT/structured text, use path+steps with split, "
+                "base64url and json_get so encoded bytes never pass through your response. For manifest-ordered "
+                "shards call ctf_batch_transform with paths in decoded order: it transforms each file separately "
+                "and concatenates decoded bytes. Never concatenate encoded Base64 fragments. On decompression "
+                "failure recheck range and order. Reject candidate text containing control characters. "
             ),
             "forensics": (
                 "Inspect inventory_not_opened_by_tools for missing evidence links. Use read_events for explicit "
                 "clock correction. Event selection and clock correction are separate: an accurate later request "
                 "does not replace a corrected session start. Correlate stable session/request IDs before choosing. "
+                "For documented sequenced DNS labels, use dns_exfil_correlate to deduplicate, order, decode once, "
+                "map client IP through inventory, and bind the process event. ctf_transform is available for other "
+                "explicit bounded encodings. "
             ),
             "fix": (
                 "For a documented finite SQL option set, reject unsupported fields unless a fallback is explicitly "
                 "required. Preserve case-insensitive directions by validating direction.lower(), then derive a finite "
                 "canonical local such as direction.upper(); never interpolate the original unchecked input. A "
                 "terminating membership guard permits interpolation of its guarded token. Concatenation is not a "
-                "SQL-injection fix. A checked_edit range is inclusive: replace an existing final statement too, or "
+                "SQL-injection fix. Treat security_requirements as mandatory post-edit properties: path containment "
+                "needs path semantics rather than string startswith; plaintext tokens must be represented in storage "
+                "only by a cryptographic digest; structured credentials requiring rejection should raise before a "
+                "database query; request mappings need an allowlist projection; webhook signatures need HMAC and "
+                "constant-time comparison. A checked_edit range is inclusive: replace an existing final statement too, or "
                 "do not repeat it in the replacement. "
             ),
         }.get(context.decision.mode, "")
@@ -338,6 +386,7 @@ class LazyLocalModelPlanner:
             "Read planner_feedback and last_control_feedback before retrying. A hypothesis may be a new "
             "statement or an existing Hxx identifier; backtrack must select a different hypothesis. "
             "Correct invalid action names/arguments using available_tools; do not repeat rejected calls. "
+            "Never invoke agent.validators, fabricate a baseline path, or create an undeclared report: runtime owns validation. "
             "security_scan only covers dynamic SQL: its counts do not establish absence of other bugs. "
             "Audit/forensics write_file is restricted to declared artifact paths. "
             + mode_guidance
@@ -387,7 +436,45 @@ class LazyLocalModelPlanner:
             timeout_seconds=max(0.1, context.remaining_seconds - 1.0),
             json_object=True,
         )
-        payload = _extract_json_object(response)
+        try:
+            payload = _extract_json_object(response)
+        except ModelRequestError as parse_error:
+            # A dedicated structural repair is materially cheaper and more
+            # reliable than replaying the entire repository context.  The
+            # repaired action is still parsed and policy-checked normally.
+            if context.remaining_seconds <= 5:
+                raise
+            repair_state = {
+                "error": str(parse_error),
+                "allowed_actions": allowed,
+                "tool_parameters": {
+                    tool.name: tool.parameters for tool in context.tools
+                },
+                "malformed_response": response[:4_000],
+            }
+            repaired = self._ensure_client().complete(
+                (
+                    {
+                        "role": "system",
+                        "content": (
+                            "Repair one malformed planner action. Return exactly one JSON object "
+                            "with keys rationale, name, arguments in that order and no other text. "
+                            "Preserve the intended action when possible; choose only an allowed name "
+                            "and use only its declared arguments."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            repair_state, ensure_ascii=False, separators=(",", ":")
+                        ),
+                    },
+                ),
+                max_tokens=450,
+                timeout_seconds=min(20.0, max(0.1, context.remaining_seconds - 1.0)),
+                json_object=True,
+            )
+            payload = _extract_json_object(repaired)
         forbidden = sorted(FORBIDDEN_MODEL_OWNED_EVIDENCE_KEYS.intersection(payload))
         if forbidden:
             raise ModelRequestError(

@@ -31,6 +31,8 @@ def classify_instruction(instruction: str) -> StrategyDecision:
             r"\bdo not (?:modify|fix|change)(?:\s+or\s+(?:modify|fix|change))?\s+(?:(?:the|any)\s+)?(?:anything|code|source|project|application|files?\b(?!\s+(?:under|in)\s+tests))",
             r"\bwithout (?:modifying|fixing|changing)\s+(?:(?:the|any)\s+)?(?:anything|code|source|project|application|files?\b(?!\s+(?:under|in)\s+tests))",
             r"\bdo not fix(?=\s*[.;,]|$)",
+            r"\b(?:do not|don't|never|must not)\s+(?:fix|harden|secure|repair|remediate|patch|correct)\s+"
+            r"(?:it|anything|the\s+(?:code|source|project|application))\b",
             r"\bне (?:изменяй|изменять|модифицируй|исправляй|исправлять)\b",
         ),
     )
@@ -41,15 +43,53 @@ def classify_instruction(instruction: str) -> StrategyDecision:
     asks_fix = contains_any(
         normalized,
         (
-            r"\bfix (?:it|them|the|security|vulnerab)",
-            r"\bfix\b.{0,80}\b(?:bug|issue|security|vulnerab|authorization|access[- ]control|permission)\b",
-            r"\b(?:bug|issue|vulnerab|authorization|access[- ]control|permission)\b.{0,120}\bfix\b",
+            # Treat an imperative remediation verb as the intent, not the noun
+            # that happens to follow it.  The old ``fix the/security/...``
+            # whitelist misrouted ordinary requests such as ``Fix mass
+            # assignment`` and ``Fix NoSQL operator injection`` to general.
+            # Explicit non-mutation language is handled separately by
+            # ``no_modify`` and retains precedence below.
+            r"(?:^|[.;:!?]\s+)(?:please\s+)?(?:fix|harden|secure|repair|remediate|patch|correct)\b",
+            r"\b(?:please|must|should|need\s+to|task\s+is\s+to)\s+"
+            r"(?:fix|harden|secure|repair|remediate|patch|correct)\b",
+            r"\bfix\s+(?:it|them)\b",
+            r"\bfix\b.{0,80}\b(?:bug|issue|security|vulnerab\w*|authorization|access[- ]control|permission)\b",
+            r"\b(?:bug|issue|vulnerab\w*|authorization|access[- ]control|permission)\b.{0,120}\bfix\b",
             r"\bmake\b.{0,50}\bfix\b",
-            r"\brepair\b",
-            r"\bremediate\b",
-            r"\bpatch\b",
             r"\bисправ(?:ь|ить|ьте)\b",
             r"\bустран(?:и|ить|ите)\b",
+            r"\b(?:защит(?:и|ить|ите)|укреп(?:и|ить|ите)|почин(?:и|ить|ите))\b",
+        ),
+    )
+    # Security repair tasks commonly express the contract through immutable
+    # tests and an explicit project suite even when the remediation verb is an
+    # unseen synonym.  This is stronger evidence than any vulnerability noun.
+    asks_fix = asks_fix or (
+        contains_any(normalized, (r"\bpytest\b", r"\bpython\s+-m\s+unittest\b", r"\brun\s+the\s+tests?\b"))
+        and contains_any(
+            normalized,
+            (
+                r"\bdo not (?:modify|change|edit)\s+(?:the\s+)?tests?\b",
+                r"\bwithout (?:modifying|changing|editing)\s+(?:the\s+)?tests?\b",
+            ),
+        )
+    )
+    forensic_action = contains_any(
+        normalized,
+        (
+            r"\b(?:investigat\w*|reconstruct\w*|correlat\w*|deduplicat\w*|"
+            r"analy[sz]\w*|determine|attribute|trace)\b",
+            r"\b(?:расслед\w*|реконстру\w*|коррел\w*|дедуплиц\w*|"
+            r"проанализ\w*|определ\w*)\b",
+        ),
+    )
+    forensic_subject = contains_any(
+        normalized,
+        (
+            r"\b(?:logs?|events?|incident|timeline|compromise|exfiltrat\w*|"
+            r"dns|pcap|network|cloudtrail|kubernetes|evidence|artifact)\b",
+            r"\b(?:лог\w*|событи\w*|инцидент\w*|таймлайн\w*|"
+            r"эксфильтр\w*|днс|сетев\w*|доказательств\w*|артефакт\w*)\b",
         ),
     )
     asks_forensics = contains_any(
@@ -61,6 +101,18 @@ def classify_instruction(instruction: str) -> StrategyDecision:
             r"\binvestigat\w*\b.{0,100}\bevidence\b",
             r"\bфорензик",
             r"\b(?:investigat\w*|reconstruct\w*|correlat\w*|analy[sz]\w*|determine)\b.{0,160}\b(?:logs?|incident|timeline|compromise|exfiltrat\w*|cloudtrail|kubernetes|evidence)\b",
+        ),
+    ) or (forensic_action and forensic_subject)
+    explicit_forensics = contains_any(
+        normalized,
+        (
+            r"incident_report\.txt",
+            r"\bforensics?\b",
+            r"\bincident\b.{0,100}\blogs?\b",
+            r"\bkubernetes\b.{0,80}\baudit\s+logs?\b",
+            r"\baudit\s+logs?\b.{0,80}\bkubernetes\b",
+            r"\bdns\b.{0,80}\bexfiltrat\w*\b",
+            r"\bexfiltrat\w*\b.{0,80}\bdns\b",
         ),
     )
     asks_ctf = contains_any(
@@ -100,7 +152,9 @@ def classify_instruction(instruction: str) -> StrategyDecision:
             confidence="high",
             reason="instruction requests an offline CTF flag or answer artifact",
         )
-    if (no_modify and not asks_forensics) or (asks_report and not asks_fix and not asks_forensics):
+    if (no_modify and not asks_forensics) or (
+        asks_report and not asks_fix and not explicit_forensics
+    ):
         return StrategyDecision(
             mode="audit",
             should_modify_project=False,

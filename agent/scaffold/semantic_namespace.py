@@ -596,6 +596,7 @@ class SemanticCyberACIProvider(CyberACIProvider):
         arguments: dict[str, Any],
         *,
         require_security_remediation: bool = False,
+        security_requirements: tuple[str, ...] = (),
     ) -> ToolResult:
         mapped = dict(arguments)
         original_path = mapped.get("path")
@@ -603,6 +604,7 @@ class SemanticCyberACIProvider(CyberACIProvider):
         result = super()._checked_edit(
             mapped,
             require_security_remediation=require_security_remediation,
+            security_requirements=security_requirements,
         )
         if not result.data:
             return result

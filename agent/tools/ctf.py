@@ -31,16 +31,19 @@ SUPPORTED_OPERATIONS = frozenset(
         "base64url",
         "gzip",
         "hex",
+        "json_get",
         "reverse",
         "reverse_bytes",
         "rot13",
+        "split",
+        "strip",
         "url",
         "xor",
         "zlib",
     }
 )
 FLAG_RE = re.compile(
-    r"(?i)(?:flag|ctf|sber)[{][^{}\r\n]{1,256}[}]"
+    r"(?i)(?:flag|ctf|sber)[{][^{}\x00-\x1f\x7f-\x9f\r\n]{1,256}[}]"
 )
 INVALID_PERCENT_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 
@@ -133,7 +136,62 @@ def _text_transform(data: bytes, operation: str) -> bytes:
         raise CtfTransformError(f"{operation} input must be valid UTF-8") from error
     if operation == "rot13":
         return codecs.decode(text, "rot_13").encode("utf-8")
+    if operation == "strip":
+        return text.strip().encode("utf-8")
     return text[::-1].encode("utf-8")
+
+
+def _split(data: bytes, step: Mapping[str, object]) -> bytes:
+    if set(step) != {"operation", "separator", "index"}:
+        raise CtfTransformError("split requires exactly operation, separator and index")
+    separator = step.get("separator")
+    index = step.get("index")
+    if not isinstance(separator, str) or not separator or len(separator) > 32:
+        raise CtfTransformError("split separator must be 1..32 text characters")
+    if isinstance(index, bool) or not isinstance(index, int):
+        raise CtfTransformError("split index must be an integer")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise CtfTransformError("split input must be valid UTF-8") from error
+    parts = text.split(separator)
+    if not -len(parts) <= index < len(parts):
+        raise CtfTransformError(
+            f"split index {index} is outside {len(parts)} component(s)"
+        )
+    return parts[index].encode("utf-8")
+
+
+def _json_get(data: bytes, step: Mapping[str, object]) -> bytes:
+    if set(step) != {"operation", "path"}:
+        raise CtfTransformError("json_get requires exactly operation and path")
+    raw_path = step.get("path")
+    if isinstance(raw_path, str) and raw_path:
+        components: list[object] = raw_path.split(".")
+    elif isinstance(raw_path, list) and raw_path and all(
+        isinstance(item, (str, int)) and not isinstance(item, bool) for item in raw_path
+    ):
+        components = list(raw_path)
+    else:
+        raise CtfTransformError("json_get path must be a non-empty dotted string or string/integer array")
+    try:
+        value: object = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CtfTransformError("json_get input must be valid UTF-8 JSON") from error
+    for component in components:
+        if isinstance(component, int):
+            if not isinstance(value, list) or not -len(value) <= component < len(value):
+                raise CtfTransformError(f"json_get list index {component!r} is unavailable")
+            value = value[component]
+        else:
+            if not isinstance(value, dict) or component not in value:
+                raise CtfTransformError(f"json_get object key {component!r} is unavailable")
+            value = value[component]
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    if isinstance(value, (dict, list, int, float, bool)) or value is None:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    raise CtfTransformError("json_get selected an unsupported value")
 
 
 def _xor_key(step: Mapping[str, object]) -> bytes:
@@ -209,7 +267,29 @@ def _parse_steps(steps: object) -> tuple[Mapping[str, object], ...]:
         operation = raw_step.get("operation")
         if not isinstance(operation, str) or operation not in SUPPORTED_OPERATIONS:
             raise CtfTransformError(f"step {index} has unsupported operation")
-        if operation != "xor" and set(raw_step) != {"operation"}:
+        if operation == "split":
+            if set(raw_step) != {"operation", "separator", "index"}:
+                raise CtfTransformError("split requires exactly operation, separator and index")
+            separator = raw_step.get("separator")
+            index_value = raw_step.get("index")
+            if not isinstance(separator, str) or not separator or len(separator) > 32:
+                raise CtfTransformError("split separator must be 1..32 text characters")
+            if isinstance(index_value, bool) or not isinstance(index_value, int):
+                raise CtfTransformError("split index must be an integer")
+        elif operation == "json_get":
+            allowed = {"operation", "path"}
+            if set(raw_step) != allowed:
+                raise CtfTransformError("json_get requires exactly operation and path")
+            path = raw_step.get("path")
+            if not (
+                isinstance(path, str) and path
+                or isinstance(path, list) and path and all(
+                    isinstance(item, (str, int)) and not isinstance(item, bool)
+                    for item in path
+                )
+            ):
+                raise CtfTransformError("json_get path must be a non-empty dotted string or string/integer array")
+        elif operation != "xor" and set(raw_step) != {"operation"}:
             raise CtfTransformError(
                 f"{operation} step accepts only the operation field"
             )
@@ -225,6 +305,36 @@ def transform_ctf_data(value: object, steps: object) -> dict[str, Any]:
     if len(value) > MAX_INPUT_CHARS:
         raise CtfTransformError(f"value exceeds {MAX_INPUT_CHARS} characters")
     return transform_ctf_bytes(value.encode("utf-8"), steps)
+
+
+def describe_ctf_bytes(
+    data: bytes,
+    *,
+    input_size_bytes: int,
+    input_sha256: str,
+    operations: Sequence[str],
+) -> dict[str, Any]:
+    """Build the bounded observation shared by scalar and batch transforms."""
+
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        text = None
+    candidates = list(dict.fromkeys(FLAG_RE.findall(text or "")))
+    ascii_preview = "".join(
+        chr(byte) if 32 <= byte <= 126 else "." for byte in data[:MAX_PREVIEW_CHARS]
+    )
+    return {
+        "input_size_bytes": input_size_bytes,
+        "input_sha256": input_sha256,
+        "operations": list(operations),
+        "size_bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "text": text,
+        "hex": data.hex(),
+        "ascii_preview": ascii_preview,
+        "flag_candidates": candidates,
+    }
 
 
 def transform_ctf_bytes(data: bytes, steps: object) -> dict[str, Any]:
@@ -249,8 +359,12 @@ def transform_ctf_bytes(data: bytes, steps: object) -> dict[str, Any]:
             data = _decode_hex(data)
         elif operation == "url":
             data = _decode_url(data)
-        elif operation in {"rot13", "reverse"}:
+        elif operation in {"rot13", "reverse", "strip"}:
             data = _text_transform(data, operation)
+        elif operation == "split":
+            data = _split(data, step)
+        elif operation == "json_get":
+            data = _json_get(data, step)
         elif operation == "reverse_bytes":
             data = data[::-1]
         elif operation == "xor":
@@ -262,25 +376,12 @@ def transform_ctf_bytes(data: bytes, steps: object) -> dict[str, Any]:
         data = _bounded(data, operation)
         applied.append(operation)
 
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        text = None
-    candidates = list(dict.fromkeys(FLAG_RE.findall(text or "")))
-    ascii_preview = "".join(
-        chr(byte) if 32 <= byte <= 126 else "." for byte in data[:MAX_PREVIEW_CHARS]
+    return describe_ctf_bytes(
+        data,
+        input_size_bytes=input_size,
+        input_sha256=input_sha256,
+        operations=applied,
     )
-    return {
-        "input_size_bytes": input_size,
-        "input_sha256": input_sha256,
-        "operations": applied,
-        "size_bytes": len(data),
-        "sha256": hashlib.sha256(data).hexdigest(),
-        "text": text,
-        "hex": data.hex(),
-        "ascii_preview": ascii_preview,
-        "flag_candidates": candidates,
-    }
 
 
 def build_parser() -> argparse.ArgumentParser:

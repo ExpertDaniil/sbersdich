@@ -21,6 +21,14 @@
 6. При падении теста определить причину, а не менять тест ради зелёного результата.
 7. Остановиться после доказанного исправления; не проводить несвязанный refactor.
 
+Явные `security_requirements` из instruction проверяются отдельным post-edit
+guard. Для containment не использовать строковый `startswith`: sibling path с
+общим префиксом не является дочерним. Для одноразового секрета хранить digest,
+а не raw token даже в ключе mapping. Если контракт требует reject structured
+credentials, тип отклоняется исключением до построения database query, а не
+тихим `None`. Request mapping сначала проецируется через allowlist. Webhook HMAC
+сравнивается constant-time и связывает timestamp с точными raw body bytes.
+
 При `finish` оба runtime автоматически запускают project pytest-команды,
 зафиксированные из instruction и корневого `AGENTS.md` до редактирования кода.
 Если явной команды нет, но есть Python-тесты в `tests/`, запускается эта папка.

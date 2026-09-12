@@ -113,6 +113,15 @@ class ArtifactRule:
     expected_text: str | None = None
     required_keys: tuple[str, ...] = ()
     nonempty_findings: bool = False
+    # Optional instruction-native schema for an array nested in a JSON
+    # artifact.  Empty values preserve the historical generic
+    # ``security-report`` contract for callers that do not declare a schema.
+    array_item_key: str | None = None
+    item_required_keys: tuple[str, ...] = ()
+    item_integer_keys: tuple[str, ...] = ()
+    item_string_keys: tuple[str, ...] = ()
+    item_enums: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    item_patterns: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -453,6 +462,62 @@ def validate_security_report_payload(payload: Any) -> None:
                 raise ValidationError(f"finding {index}.{key} must be non-empty text")
 
 
+def validate_declared_array_items(payload: Any, rule: ArtifactRule) -> None:
+    """Validate the exact nested JSON schema declared by the task.
+
+    Benchmark instructions are authoritative.  A generic report schema must
+    never rename task-declared fields such as ``cwe``, ``file`` or ``line``.
+    Constraints are deliberately data-driven so this validator remains useful
+    for unseen field names and does not encode expected findings.
+    """
+
+    array_key = rule.array_item_key
+    if array_key is None:
+        return
+    if not isinstance(payload, dict):
+        raise ValidationError("JSON artifact must be an object")
+    items = payload.get(array_key)
+    if not isinstance(items, list):
+        raise ValidationError(f"{array_key} must be an array")
+
+    expected = set(rule.item_required_keys)
+    integer_keys = set(rule.item_integer_keys)
+    string_keys = set(rule.item_string_keys)
+    enum_by_key = dict(rule.item_enums)
+    pattern_by_key = dict(rule.item_patterns)
+    for index, item in enumerate(items):
+        if not isinstance(item, dict) or set(item) != expected:
+            actual = set(item) if isinstance(item, dict) else set()
+            raise ValidationError(
+                f"{array_key}[{index}] requires exactly the declared fields: "
+                f"{sorted(expected)}; missing={sorted(expected - actual)}; "
+                f"extra={sorted(actual - expected)}"
+            )
+        for key in integer_keys:
+            value = item[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValidationError(
+                    f"{array_key}[{index}].{key} must be a positive integer"
+                )
+        for key in string_keys:
+            value = item[key]
+            if not isinstance(value, str) or not value.strip():
+                raise ValidationError(
+                    f"{array_key}[{index}].{key} must be non-empty text"
+                )
+        for key, choices in enum_by_key.items():
+            if item[key] not in choices:
+                raise ValidationError(
+                    f"{array_key}[{index}].{key} must be one of {sorted(choices)}"
+                )
+        for key, pattern in pattern_by_key.items():
+            value = item[key]
+            if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
+                raise ValidationError(
+                    f"{array_key}[{index}].{key} does not match the declared format"
+                )
+
+
 def validate_artifact(rule: ArtifactRule) -> CheckResult:
     started = time.monotonic()
     name = f"artifact:{rule.kind}:{rule.path}"
@@ -477,7 +542,10 @@ def validate_artifact(rule: ArtifactRule) -> CheckResult:
                 except json.JSONDecodeError as error:
                     raise ValidationError(f"artifact is not valid JSON: {error}") from error
                 if rule.kind == "security-report":
-                    validate_security_report_payload(payload)
+                    if rule.array_item_key and rule.item_required_keys:
+                        validate_declared_array_items(payload, rule)
+                    else:
+                        validate_security_report_payload(payload)
                     if rule.nonempty_findings and not payload["findings"]:
                         raise ValidationError("instruction requires non-empty findings; inspect beyond the SQL scanner")
                 if rule.required_keys and (

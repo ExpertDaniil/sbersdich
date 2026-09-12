@@ -264,6 +264,20 @@ class AgentState:
                 path = result.data.get("source_path", result.data.get("path"))
                 if isinstance(path, str):
                     self._read_files.add(path)
+            elif action.name == "ctf_transform":
+                source = result.data.get("source")
+                if isinstance(source, dict) and isinstance(source.get("path"), str):
+                    self._read_files.add(source["path"])
+            elif action.name == "ctf_batch_transform":
+                for component in result.data.get("components", []):
+                    if isinstance(component, dict) and isinstance(component.get("path"), str):
+                        self._read_files.add(component["path"])
+            elif action.name == "dns_exfil_correlate":
+                sources = result.data.get("sources")
+                if isinstance(sources, dict):
+                    self._read_files.update(
+                        path for path in sources.values() if isinstance(path, str)
+                    )
         self._record_evidence(
             sequence=sequence,
             source="tool",

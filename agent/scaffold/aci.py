@@ -35,6 +35,7 @@ from agent.core.workspace import (
     search_workspace_text,
 )
 from agent.tools.security_scan import scan_python_source
+from agent.tools.fix_guard import scan_fix_candidate
 
 from .contracts import CapabilityLevel, ExecutionContext, ToolSpec
 from .security_relevance import SecurityAwareRepositoryDistiller
@@ -323,6 +324,7 @@ class CyberACIProvider:
                 return self._checked_edit(
                     action.arguments,
                     require_security_remediation=context.decision.mode == "fix",
+                    security_requirements=context.security_requirements,
                 )
             if action.name == "run_check":
                 return self._run_check(action.arguments)
@@ -518,6 +520,7 @@ class CyberACIProvider:
         arguments: dict[str, Any],
         *,
         require_security_remediation: bool = False,
+        security_requirements: tuple[str, ...] = (),
     ) -> ToolResult:
         self._only(
             arguments,
@@ -615,6 +618,21 @@ class CyberACIProvider:
 
         if require_security_remediation and target.suffix.casefold() == ".py":
             relative = target.relative_to(self.workdir).as_posix()
+            property_issues = scan_fix_candidate(
+                relative, new_text, security_requirements
+            )
+            if property_issues:
+                return ToolResult(
+                    False,
+                    "checked_edit rejected before write: instruction-derived security property still fails",
+                    {
+                        "path": relative,
+                        "sha256": current_sha,
+                        "written": False,
+                        "guard": "instruction-security-properties",
+                        "issues": property_issues,
+                    },
+                )
             before_findings = scan_python_source(old_text, relative)
             edited_findings = []
             edited_functions: set[str] = set()

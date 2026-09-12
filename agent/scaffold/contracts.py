@@ -65,6 +65,7 @@ class ExecutionContext:
     decision: StrategyDecision
     max_capability: CapabilityLevel
     artifact_paths: tuple[Path, ...] = ()
+    security_requirements: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

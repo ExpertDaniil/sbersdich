@@ -6,14 +6,21 @@
 
 ## Что уже есть
 
-- `run.sh` и `agent/local_agent.py` — точка входа и подключение локальной модели;
+- `run.sh` и `agent/scaffold/cli.py` — production entrypoint и подключение локальной модели;
 - `agent/core/` — контракты, автономный цикл, бюджеты и безопасные инструменты;
-- `agent/playbooks/` — инструкции для audit, fix и forensics;
-- `agent/tools/` — анализ кода, SQL-fix и обработка incident-данных;
+- `agent/playbooks/` — отдельные инструкции для audit, fix, forensics и CTF;
+- `agent/tools/` — SQL/non-SQL анализ, instruction-derived fix guards,
+  incident/DNS correlation и byte-safe CTF transforms;
 - `agent/validators.py` — проверка артефактов, изменений, синтаксиса и тестов;
 - `security/tasks/` — локальные учебные ИБ-решения и regression-проверки;
 - `evaluation/` — проверки A-13, переносимости, CTF и журнал причин провалов;
 - `scripts/` — повторяемые локальные и публичные проверки.
+
+Production runtime использует один bounded scaffold kernel. Он компилирует
+task contract из instruction, локализует source/evidence через Repository
+Distiller, выдаёт модели режимный capability-gated ToolBus и принимает success
+только после детерминированной проверки. `agent/core/` содержит общие безопасные
+примитивы и legacy-совместимость, а не второй параллельный agent loop.
 
 Архитектура описана в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), отчёты
 по этапам находятся в `docs/` и `security/tasks/`.

@@ -10,6 +10,7 @@ from agent.core.ctf_completion import check_ctf_completion
 from agent.core.fix_validation import failed_validation_reason, validate_fix_task
 from agent.core.models import ValidationFeedback
 from agent.tools.security_scan import finding_observation, scan_project
+from agent.tools.fix_guard import scan_fix_requirements
 from agent.validators import CheckResult, ValidationPolicy, validate_task
 
 from .contracts import VerificationContext, VerificationResult
@@ -116,13 +117,38 @@ class LegacyTaskVerifier:
                 # in trusted validation feedback so the planner can act on them.
                 findings = scan_project(context.workdir, include_tests=False)
                 scan_detail = json.dumps(finding_observation(findings), ensure_ascii=False)
+                property_issues = scan_fix_requirements(
+                    context.workdir, context.contract.security_requirements
+                )
+                property_detail = json.dumps(
+                    {
+                        "requirements": list(context.contract.security_requirements),
+                        "issue_count": len(property_issues),
+                        "issues": property_issues,
+                    },
+                    ensure_ascii=False,
+                )
                 report = replace(
-                    report, passed=not findings,
-                    checks=report.checks + (CheckResult("post-fix-security-scan", not findings, scan_detail),),
+                    report,
+                    passed=not findings and not property_issues,
+                    checks=report.checks + (
+                        CheckResult("post-fix-security-scan", not findings, scan_detail),
+                        CheckResult(
+                            "post-fix-security-properties",
+                            not property_issues,
+                            property_detail,
+                        ),
+                    ),
                 )
                 if findings:
                     passed = False
                     reason = "post-fix security scan still has supported findings: " + scan_detail[:2500]
+                elif property_issues:
+                    passed = False
+                    reason = (
+                        "post-fix instruction-derived security properties still fail: "
+                        + property_detail[:2500]
+                    )
         elif context.decision.mode == "ctf":
             passed, reason = check_ctf_completion(
                 context.contract, context.events, report

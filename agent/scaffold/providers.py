@@ -23,6 +23,7 @@ LEGACY_CAPABILITIES = {
     "read_bytes": CapabilityLevel.INSPECT,
     "search_text": CapabilityLevel.INSPECT,
     "security_scan": CapabilityLevel.ANALYZE,
+    "audit_signals": CapabilityLevel.ANALYZE,
     "forensics_analyze": CapabilityLevel.ANALYZE,
     "run_command": CapabilityLevel.EXECUTE,
     "apply_patch": CapabilityLevel.MUTATE,

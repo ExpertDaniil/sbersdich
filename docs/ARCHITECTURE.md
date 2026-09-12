@@ -1,6 +1,6 @@
 # Архитектура репозитория
 
-## 1. `agent/` — будущий submission-код
+## 1. `agent/` — production submission-код
 
 Только содержимое этой зоны и корневой `run.sh`, который появится после интеграции, должны рассматриваться как кандидаты на включение в финальный ZIP.
 
@@ -8,6 +8,11 @@
 
 - `strategies.py` — реализованная детерминированная классификация задачи;
 - `tools/security_scan.py` — реализованный AST-аудитор source-to-SQL-sink;
+- `tools/audit_signals.py` — консервативные non-SQL audit leads с source lines;
+- `tools/fix_guard.py` — instruction-derived post-edit security properties;
+- `tools/ctf.py`, `tools/binary_records.py` — byte-safe scalar/batch transforms
+  и binary carving;
+- `tools/dns_exfil.py` — bounded DNS sequence/decode/inventory/process correlation;
 - `tools/sql_parameterize.py` — реализованный ограниченный asyncpg-fixer;
 - `tools/forensics.py` — реализованные inventory, incident-profile и evidence
   graph;
@@ -24,10 +29,19 @@
 - `core/tools.py` — режимный allowlist и каталог action-схем для драйвера;
 - `core/workspace.py` — bounded list/read/search, безопасный unified patch и
   allowlisted process runner с timeout и ограничением observation.
+- `scaffold/kernel.py` — единственный production bounded loop;
+- `scaffold/planner.py` — deterministic fast path и локальная LLM policy;
+- `scaffold/context_compiler.py` — semantic namespace и trusted source windows;
+- `scaffold/registry.py`, `scaffold/providers.py` — capability/mode ToolBus;
+- `scaffold/verifier.py` — freshness, mode policy, frozen tests, scanners и
+  instruction-derived final gate.
 
-Корневой `run.sh` запускает `agent.local_agent`. Общую Harbor-обёртку `agent.py`
+Корневой `run.sh` запускает `agent.scaffold.cli`. Общую Harbor-обёртку `agent.py`
 организаторы добавляют или перезаписывают сами, поэтому собственная логика не
 зависит от её модификации.
+
+`agent/core/loop.py` сохраняется для совместимости и независимых regressions.
+Он не запускается параллельно со scaffold и не владеет вторым production state.
 
 ## 2. `security/tasks/` — учебные ИБ-разборы
 
@@ -64,7 +78,8 @@
 ## Поток разработки
 
 ```text
-ручной разбор → независимые тесты → playbook → интеграция в agent → общий benchmark → submission.zip
+instruction → router/contract → context compiler → planner → ToolBus
+            → trusted observation → deterministic verifier → result
 ```
 
 Принцип разделения важен: verifier, expected-значения и учебные reference solution не должны попадать в `agent/` и финальный ZIP.

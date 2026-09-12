@@ -107,6 +107,9 @@ class TaskContract:
     artifacts: tuple[ArtifactRule, ...] = ()
     exact_writes: tuple[tuple[Path, str], ...] = ()
     project_checks: ProjectCheckPlan | None = None
+    # High-confidence properties explicitly requested by a fix instruction.
+    # They drive deterministic post-edit guards, never task-specific answers.
+    security_requirements: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

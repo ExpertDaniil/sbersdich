@@ -51,6 +51,14 @@ class RuntimeHypothesisController:
             return ControlDecision(True)
 
         minimum = self._minimum_capability(state_snapshot)
+        if plan.strategy is PlanStrategy.CONTINUE and self._changes_probe(
+            plan, state_snapshot
+        ):
+            # Recovery is about forcing observable progress, not forcing the
+            # model to abandon a hypothesis that may already be correct.  A
+            # different tool family or a new collection member is a legitimate
+            # next probe even when the prior observation was duplicated.
+            return ControlDecision(True)
         if plan.strategy not in {
             PlanStrategy.BACKTRACK,
             PlanStrategy.ESCALATE,
@@ -93,6 +101,35 @@ class RuntimeHypothesisController:
         # VERIFY is allowed under stagnation because a successful verifier result is
         # authoritative new evidence; a failed verification will challenge the branch.
         return ControlDecision(True)
+
+    @staticmethod
+    def _changes_probe(
+        plan: PlanDecision, snapshot: dict[str, object]
+    ) -> bool:
+        recent = snapshot.get("recent_events")
+        if not isinstance(recent, list) or not recent:
+            return False
+        latest = recent[-1]
+        if not isinstance(latest, dict):
+            return False
+        previous = latest.get("action")
+        if not isinstance(previous, dict):
+            return False
+        previous_name = previous.get("name")
+        if isinstance(previous_name, str) and previous_name != plan.action.name:
+            return True
+        previous_arguments = previous.get("arguments")
+        if not isinstance(previous_arguments, dict):
+            return False
+        current_arguments = plan.action.arguments
+        # Only evidence-target selectors count. Cosmetic argument changes do
+        # not bypass stagnation control.
+        selectors = ("path", "paths", "offset", "query", "target")
+        return any(
+            key in current_arguments
+            and current_arguments.get(key) != previous_arguments.get(key)
+            for key in selectors
+        )
 
     @staticmethod
     def _current_statement(snapshot: dict[str, object], current: object) -> str:

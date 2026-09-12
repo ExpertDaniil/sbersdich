@@ -138,6 +138,136 @@ def report_artifact_requests(instruction: str, workdir: Path) -> tuple[Path, ...
     ))
 
 
+def _quoted_identifiers(text: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(re.findall(r"[`\"']([A-Za-z_][A-Za-z_0-9]*)[`\"']", text)))
+
+
+def _declared_top_level_keys(instruction: str) -> tuple[str, ...]:
+    patterns = (
+        r"exactly\s+one\s+top[- ]level\s+key\s+([^.]+)",
+        r"exactly\s+(?:these|the following)\s+(?:top[- ]level\s+)?keys\s*:\s*([^.]+)",
+        r"(?:top[- ]level|JSON object)\s+(?:must\s+)?contain\s+exactly\s+([^.]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, instruction, re.IGNORECASE)
+        if match:
+            keys = _quoted_identifiers(match.group(1))
+            if keys:
+                return keys
+    return ()
+
+
+def _declared_item_keys(instruction: str) -> tuple[str, ...]:
+    match = re.search(
+        r"(?:every|each)\s+(?:array\s+)?(?:item|finding|entry|object)\s+"
+        r"must\s+contain\s+exactly\s+([^.]+)",
+        instruction,
+        re.IGNORECASE,
+    )
+    return _quoted_identifiers(match.group(1)) if match else ()
+
+
+def _declared_array_key(instruction: str, top_keys: tuple[str, ...]) -> str | None:
+    for key in top_keys:
+        if re.search(
+            rf"[`\"']?{re.escape(key)}[`\"']?\s+must\s+be\s+(?:a\s+)?(?:non[- ]empty\s+)?array",
+            instruction,
+            re.IGNORECASE,
+        ):
+            return key
+    if len(top_keys) == 1 and re.search(
+        r"(?:every|each)\s+(?:array\s+)?(?:item|finding|entry|object)",
+        instruction,
+        re.IGNORECASE,
+    ):
+        return top_keys[0]
+    return None
+
+
+def _artifact_rule_for_report(
+    *, decision: StrategyDecision, path: Path, instruction: str
+) -> ArtifactRule:
+    top_keys = _declared_top_level_keys(instruction)
+    item_keys = _declared_item_keys(instruction)
+    array_key = _declared_array_key(instruction, top_keys) if item_keys else None
+    integer_keys: tuple[str, ...] = ()
+    if "line" in item_keys and re.search(
+        r"(?:a\s+)?positive\s+integer(?:\s+source)?\s+line|line\s+(?:must\s+be\s+)?(?:a\s+)?positive\s+integer",
+        instruction,
+        re.IGNORECASE,
+    ):
+        integer_keys = ("line",)
+    string_keys = tuple(key for key in item_keys if key not in integer_keys)
+
+    item_enums: list[tuple[str, tuple[str, ...]]] = []
+    if "severity" in item_keys:
+        severity_match = re.search(
+            r"(?:use\s+)?lowercase\s+(.{0,160}?)\s+for\s+severity",
+            instruction,
+            re.IGNORECASE | re.DOTALL,
+        )
+        severity_values = _quoted_identifiers(severity_match.group(1)) if severity_match else ()
+        if severity_values:
+            item_enums.append(("severity", severity_values))
+
+    item_patterns: list[tuple[str, str]] = []
+    if "cwe" in item_keys and re.search(r"canonical\s+[`\"']?CWE-NNN", instruction, re.IGNORECASE):
+        item_patterns.append(("cwe", r"CWE-[1-9][0-9]{1,4}"))
+    if "file" in item_keys and re.search(
+        r"(?:[`\"']?/app[`\"']?[- ]relative|workspace[- ]relative)\s+source\s+path",
+        instruction,
+        re.IGNORECASE,
+    ):
+        item_patterns.append(("file", r"(?!/)(?!.*(?:^|/)\.\.(?:/|$)).+"))
+
+    nonempty = bool(re.search(
+        r"non[- ]empty\s+[`\"']?findings|"
+        r"findings[`\"']?\s+must\s+be\s+(?:a\s+)?non[- ]empty\s+array|"
+        r"findings[`\"']?\s+(?:array\s+)?must\s+not\s+be\s+empty",
+        instruction,
+        re.IGNORECASE,
+    ))
+    kind = (
+        "security-report" if decision.mode == "audit" and path.suffix.lower() == ".json"
+        else "json" if path.suffix.lower() == ".json"
+        else "incident-report" if path.name == "incident_report.txt" else "text"
+    )
+    return ArtifactRule(
+        kind,
+        path,
+        required_keys=top_keys,
+        nonempty_findings=nonempty,
+        array_item_key=array_key,
+        item_required_keys=item_keys,
+        item_integer_keys=integer_keys,
+        item_string_keys=string_keys,
+        item_enums=tuple(item_enums),
+        item_patterns=tuple(item_patterns),
+    )
+
+
+def _fix_security_requirements(instruction: str) -> tuple[str, ...]:
+    """Extract only explicit, high-confidence security properties."""
+
+    lowered = instruction.casefold()
+    requirements: list[str] = []
+    if any(term in lowered for term in ("path traversal", "directory traversal", "sibling-prefix", "sibling prefix")):
+        requirements.append("path-containment")
+    if "token" in lowered and "plaintext" in lowered and any(
+        term in lowered for term in ("reset", "recovery", "store", "storage", "persist")
+    ):
+        requirements.append("no-plaintext-token-storage")
+    if any(term in lowered for term in ("nosql", "operator injection", "mongo")) and any(
+        term in lowered for term in ("structured", "object", "mapping", "dictionary", "non-string")
+    ):
+        requirements.append("reject-structured-credentials")
+    if "webhook" in lowered and any(term in lowered for term in ("signature", "hmac")):
+        requirements.append("webhook-hmac")
+    if "mass assignment" in lowered or "over-posting" in lowered or "overposting" in lowered:
+        requirements.append("mass-assignment")
+    return tuple(requirements)
+
+
 def build_task_contract(
     decision: StrategyDecision, instruction: str, workdir: Path
 ) -> TaskContract:
@@ -147,22 +277,9 @@ def build_task_contract(
         if not paths:
             default = "security_report.json" if decision.mode == "audit" else "incident_report.txt"
             paths = (root / default,)
-        keys_match = re.search(
-            r"\bexactly\s+(?:these|the following)\s+keys\s*:\s*([^\n]*(?:\n[^\n]+)?)",
-            instruction, re.IGNORECASE,
-        )
-        keys = tuple(re.findall(r"[`\"']([A-Za-z_][A-Za-z_0-9]*)[`\"']", keys_match[1])) if keys_match else ()
-        nonempty = bool(re.search(
-            r"non[- ]empty\s+[`\"']?findings|findings[`\"']?\s+(?:array\s+)?must\s+not\s+be\s+empty",
-            instruction, re.IGNORECASE,
-        ))
         return TaskContract(artifacts=tuple(
-            ArtifactRule(
-                "security-report" if decision.mode == "audit" and path.suffix.lower() == ".json"
-                else "json" if path.suffix.lower() == ".json"
-                else "incident-report" if path.name == "incident_report.txt" else "text",
-                path, required_keys=keys, nonempty_findings=nonempty,
-            ) for path in paths
+            _artifact_rule_for_report(decision=decision, path=path, instruction=instruction)
+            for path in paths
         ))
     if decision.mode == "ctf":
         return TaskContract(
@@ -179,4 +296,7 @@ def build_task_contract(
         ),
         exact_writes=exact_writes,
         project_checks=(discover_project_checks(instruction, root) if decision.mode == "fix" else None),
+        security_requirements=(
+            _fix_security_requirements(instruction) if decision.mode == "fix" else ()
+        ),
     )
