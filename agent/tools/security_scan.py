@@ -294,6 +294,59 @@ def _finite_values(node: ast.AST, values: dict[str, frozenset[str]],
     return None
 
 
+def _call_may_mutate_finite_values(call: ast.Call, finite_names: set[str]) -> bool:
+    """Detect calls that receive or mutate a proven local allowlist.
+
+    A pure transformation on unrelated input (for example ``direction.lower()``)
+    cannot invalidate an already-proven ``order_by`` guard. Conversely, passing a
+    finite local to an unknown function or mutating it through an attribute must
+    still invalidate the proof.
+    """
+
+    for argument in (*call.args, *(item.value for item in call.keywords)):
+        if any(isinstance(node, ast.Name) and node.id in finite_names
+               for node in ast.walk(argument)):
+            return True
+    if (isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id in finite_names
+            and call.func.attr not in {"lower", "upper"}):
+        return True
+    return False
+
+
+def _module_finite_values(tree: ast.Module) -> dict[str, frozenset[str]]:
+    """Return simple, unmodified module allowlists usable inside functions."""
+
+    candidates: dict[str, frozenset[str]] = {}
+    initial_targets: dict[str, ast.Name] = {}
+    for statement in tree.body:
+        if (not isinstance(statement, ast.Assign) or len(statement.targets) != 1
+                or not isinstance(statement.targets[0], ast.Name)
+                or not statement.targets[0].id.isupper()):
+            continue
+        finite = _finite_values(statement.value, {}, {})
+        if finite and all(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", item) for item in finite):
+            name = statement.targets[0].id
+            candidates[name] = finite
+            initial_targets[name] = statement.targets[0]
+
+    unsafe: set[str] = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Name) and node.id in candidates
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+                and node is not initial_targets[node.id]):
+            unsafe.add(node.id)
+        elif (isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del))
+              and isinstance(node.value, ast.Name) and node.value.id in candidates):
+            unsafe.add(node.value.id)
+        elif isinstance(node, ast.Call):
+            for name in candidates:
+                if _call_may_mutate_finite_values(node, {name}):
+                    unsafe.add(name)
+    return {name: value for name, value in candidates.items() if name not in unsafe}
+
+
 def _finite_block(statements: list[ast.stmt], values: dict[str, frozenset[str]],
                   constraints: dict[str, frozenset[str]] | None = None) -> dict[str, frozenset[str]] | None:
     values = dict(values)
@@ -303,7 +356,8 @@ def _finite_block(statements: list[ast.stmt], values: dict[str, frozenset[str]],
             return None
         if isinstance(statement, ast.Assign) and all(isinstance(t, ast.Name) for t in statement.targets):
             finite = _finite_values(statement.value, values, constraints)
-            if any(isinstance(child, ast.Call) and _finite_values(child, values, constraints) is None
+            if any(isinstance(child, ast.Call)
+                   and _call_may_mutate_finite_values(child, set(values))
                    for child in ast.walk(statement.value)):
                 values.clear()  # unknown calls may mutate a local allowlist through aliases
             for target in statement.targets:
@@ -376,12 +430,19 @@ def _finite_block(statements: list[ast.stmt], values: dict[str, frozenset[str]],
     return values
 
 
-def _finite_names_before(function: ast.FunctionDef | ast.AsyncFunctionDef, node: ast.AST) -> set[str]:
+def _finite_names_before(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: ast.AST,
+    initial_values: dict[str, frozenset[str]] | None = None,
+) -> set[str]:
+    starting_values = dict(initial_values or {})
+    for argument in function_argument_names(function):
+        starting_values.pop(argument, None)
     for index, statement in enumerate(function.body):
         # Only direct statements are eligible. Nested control flow retains the
         # original conservative taint analysis.
         if node is statement or (isinstance(statement, (ast.Expr, ast.Return)) and node is statement.value):
-            values = _finite_block(function.body[:index], {}) or {}
+            values = _finite_block(function.body[:index], starting_values) or {}
             return {name for name, choices in values.items()
                     if choices and all(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", item) for item in choices)}
     return set()
@@ -391,6 +452,7 @@ def audit_function(
     function: ast.FunctionDef | ast.AsyncFunctionDef,
     source: str,
     relative_path: Path,
+    initial_values: dict[str, frozenset[str]] | None = None,
 ) -> list[Finding]:
     tainted_names = infer_tainted_names(function)
     assignments: dict[str, DynamicSql] = {}
@@ -400,7 +462,9 @@ def audit_function(
             continue
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
         info = dynamic_sql_from_expression(
-            node.value, tainted_names - _finite_names_before(function, node), source
+            node.value,
+            tainted_names - _finite_names_before(function, node, initial_values),
+            source,
         )
         if info is None:
             continue
@@ -421,7 +485,9 @@ def audit_function(
             info = assignments.get(first_argument.id)
         else:
             info = dynamic_sql_from_expression(
-                first_argument, tainted_names - _finite_names_before(function, node), source
+                first_argument,
+                tainted_names - _finite_names_before(function, node, initial_values),
+                source,
             )
         if info is None:
             continue
@@ -464,9 +530,10 @@ def scan_python_source(source: str, relative_path: Path | str) -> list[Finding]:
         raise ScanError(f"cannot parse {path}: {error}") from error
 
     findings: list[Finding] = []
+    initial_values = _module_finite_values(tree)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            findings.extend(audit_function(node, source, path))
+            findings.extend(audit_function(node, source, path, initial_values))
     return findings
 
 

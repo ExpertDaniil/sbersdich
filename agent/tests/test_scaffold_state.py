@@ -87,6 +87,27 @@ class ScaffoldStateTests(unittest.TestCase):
             snapshot["inventory_not_opened_by_tools"], ["evidence/app.jsonl"]
         )
 
+    def test_historical_checked_edit_does_not_repeat_source_in_prompt_state(self):
+        state = AgentState("fix the source", "fix")
+        replacement = "x = 1\n" * 500
+        action = AgentAction("checked_edit", {
+            "path": "app.py",
+            "start_line": 1,
+            "end_line": 1,
+            "replacement": replacement,
+            "expected_sha256": "a" * 64,
+        })
+        state.record_tool_event(
+            1,
+            action,
+            ToolResult(True, "edited", {"path": "app.py", "written": True}),
+        )
+
+        arguments = state.snapshot(())["recent_events"][0]["action"]["arguments"]
+
+        self.assertNotIn(replacement, arguments.values())
+        self.assertIn(str(len(replacement)), arguments["replacement"])
+
     def test_run_status_is_the_last_serialized_status_field(self):
         result = ScaffoldRunResult(
             status="failed",

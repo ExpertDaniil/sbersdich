@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from agent.core.models import AgentAction, ValidationFeedback
+from agent.scaffold.aci import CyberACIProvider
 from agent.scaffold.contracts import (
     ExecutionContext,
     KernelLimits,
@@ -171,6 +172,66 @@ class SemanticNamespaceTests(unittest.TestCase):
             )
             self.assertFalse(result.ok)
             self.assertIn("not a Git repository", result.summary)
+
+    def test_checked_edit_rejects_incomplete_dynamic_sql_remediation_before_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = (
+                'async def list_events(conn, order_by, direction):\n'
+                '    query = f"SELECT id FROM events ORDER BY {order_by} {direction}"\n'
+                '    return await conn.fetch(query)\n'
+            )
+            path = root / "repository.py"
+            path.write_text(source, encoding="utf-8")
+            provider = CyberACIProvider(root)
+            decision = classify_instruction(
+                "Fix the SQL injection while preserving case-insensitive sort directions."
+            )
+            execution = ExecutionContext(root, decision, KernelLimits().max_capability)
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            unsafe = (
+                'async def list_events(conn, order_by, direction):\n'
+                '    if order_by not in ("created_at", "severity", "actor"):\n'
+                '        order_by = "created_at"\n'
+                '    if direction.lower() not in ("asc", "desc"):\n'
+                '        direction = "desc"\n'
+                '    query = f"SELECT id FROM events ORDER BY {order_by} {direction}"\n'
+                '    return await conn.fetch(query)'
+            )
+
+            rejected = provider.execute(
+                AgentAction("checked_edit", {
+                    "path": "repository.py", "start_line": 1, "end_line": 3,
+                    "replacement": unsafe, "expected_sha256": digest,
+                }),
+                execution,
+            )
+
+            self.assertFalse(rejected.ok)
+            self.assertEqual(rejected.data["guard"], "security-remediation")
+            self.assertEqual(path.read_text(encoding="utf-8"), source)
+
+            safe = (
+                'async def list_events(conn, order_by, direction):\n'
+                '    if order_by not in ("created_at", "severity", "actor"):\n'
+                '        raise ValueError("unsupported sort field")\n'
+                '    direction_key = direction.lower()\n'
+                '    if direction_key not in ("asc", "desc"):\n'
+                '        raise ValueError("unsupported direction")\n'
+                '    direction_sql = direction_key.upper()\n'
+                '    query = f"SELECT id FROM events ORDER BY {order_by} {direction_sql}"\n'
+                '    return await conn.fetch(query)'
+            )
+            accepted = provider.execute(
+                AgentAction("checked_edit", {
+                    "path": "repository.py", "start_line": 1, "end_line": 3,
+                    "replacement": safe, "expected_sha256": digest,
+                }),
+                execution,
+            )
+
+            self.assertTrue(accepted.ok, accepted.summary)
+            self.assertIn("security-remediation", [item["name"] for item in accepted.data["checks"]])
 
     def test_model_driven_fix_is_auto_verified_without_extra_finish_plan(self):
         with tempfile.TemporaryDirectory() as tmp:

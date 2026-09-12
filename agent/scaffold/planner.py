@@ -16,7 +16,7 @@ from .contracts import PlanDecision, PlanningContext, PlanStrategy
 from .context_compiler import _pytest_feedback
 
 
-MAX_STATE_CHARS = 24_000
+MAX_STATE_CHARS = 16_000
 MAX_GUIDANCE_CHARS = 8_000
 MAX_REPO_GUIDE_CHARS = 6_000
 FORBIDDEN_MODEL_OWNED_EVIDENCE_KEYS = frozenset(
@@ -38,8 +38,19 @@ def _encode_state(state: dict[str, Any]) -> str:
     snapshot = compact["task_state"]
     for key in ("goal", "capability_ladder"):
         snapshot.pop(key, None)  # already represented by instruction/tool catalog
+    if compact.get("last_validation"):
+        # The actionable current failure is represented once in last_validation.
+        # Historical copies in events/evidence are useful for the final trace but
+        # add no information to the next model request.
+        for event in snapshot.get("recent_events", []):
+            if "validation" in event:
+                event["validation"] = {"passed": event["validation"].get("passed")}
+        for item in snapshot.get("evidence", []):
+            if item.get("source") == "validation":
+                item.pop("data_preview", None)
+                item["summary"] = str(item.get("summary", ""))[:240]
     encoded = encode()
-    for key, minimum in (("evidence", 2), ("recent_events", 1), ("latest_by_path", 0)):
+    for key, minimum in (("evidence", 1), ("recent_events", 2), ("latest_by_path", 1)):
         items = snapshot.get(key, [])
         while len(encoded) > MAX_STATE_CHARS and len(items) > minimum:
             items.pop(0)
@@ -272,7 +283,7 @@ class LazyLocalModelPlanner:
             "last_validation": (
                 {
                     "passed": context.last_validation.passed,
-                    "reason": context.last_validation.reason,
+                    "reason": context.last_validation.reason[:500],
                     "failed_checks": [
                         {"name": check.name,
                          **(_pytest_feedback(check.detail, passed=False)
@@ -287,6 +298,32 @@ class LazyLocalModelPlanner:
         if context.repository_guide:
             state["repository_guide"] = context.repository_guide[:MAX_REPO_GUIDE_CHARS]
         encoded_state = _encode_state(state)
+        mode_guidance = {
+            "audit": (
+                "A TRUSTED_SOURCE_WINDOW marked LINES=1-N/N already contains the complete file. If it shows the "
+                "required source-to-sink chain, write the report directly; do not spend read_file and view_window "
+                "calls fetching the same bytes again. "
+            ),
+            "ctf": (
+                "Read authoritative format documentation before decoding. Use binary_records with explicit "
+                "field_sizes and compare its layout with the documentation. Never use valid=false records or "
+                "clamp a declared length to EOF. Use ctf_transform path+offset+length+steps; use reverse_bytes "
+                "for reversal and key_text/key_hex for XOR. On decompression failure recheck range and order. "
+            ),
+            "forensics": (
+                "Inspect inventory_not_opened_by_tools for missing evidence links. Use read_events for explicit "
+                "clock correction. Event selection and clock correction are separate: an accurate later request "
+                "does not replace a corrected session start. Correlate stable session/request IDs before choosing. "
+            ),
+            "fix": (
+                "For a documented finite SQL option set, reject unsupported fields unless a fallback is explicitly "
+                "required. Preserve case-insensitive directions by validating direction.lower(), then derive a finite "
+                "canonical local such as direction.upper(); never interpolate the original unchecked input. A "
+                "terminating membership guard permits interpolation of its guarded token. Concatenation is not a "
+                "SQL-injection fix. A checked_edit range is inclusive: replace an existing final statement too, or "
+                "do not repeat it in the replacement. "
+            ),
+        }.get(context.decision.mode, "")
         system = (
             "You are the planning policy for an offline autonomous cybersecurity agent. "
             "Choose exactly one next action. Return only one JSON object. Required keys: "
@@ -301,24 +338,10 @@ class LazyLocalModelPlanner:
             "Read planner_feedback and last_control_feedback before retrying. A hypothesis may be a new "
             "statement or an existing Hxx identifier; backtrack must select a different hypothesis. "
             "Correct invalid action names/arguments using available_tools; do not repeat rejected calls. "
-            "Read authoritative format documentation before decoding; use binary_records with explicit field_sizes "
-            "for exact record offsets. Never use a record with valid=false or decode to EOF to bypass its length. "
-            "Compare returned layout widths with the documentation; correct the schema before transforming. "
-            "For binary transforms use ctf_transform path+offset+length+steps, never manually copy hex "
-            "from read_bytes. Use reverse_bytes for binary reversal, key_text/key_hex for XOR. "
-            "On decompression failure check exact byte range and encoding before changing documented order. "
             "security_scan only covers dynamic SQL: its counts do not establish absence of other bugs. "
             "Audit/forensics write_file is restricted to declared artifact paths. "
-            "In forensics, inspect inventory_not_opened_by_tools for missing links. Use read_events to "
-            "compute clock-adjusted UTC from JSONL timestamps. Event selection and clock correction are "
-            "separate: a later request on an accurate clock does not replace the corrected start of a session "
-            "when the instruction asks for that session. Correlate stable session/request IDs before choosing. "
-            "For fixes, when the instruction says an API supports only a documented finite option set, "
-            "reject unsupported options unless a fallback is explicitly required; preserve documented valid "
-            "behavior and distinguish SQL values from identifiers and direction keywords. A terminating "
-            "membership guard followed by interpolation of the guarded token is acceptable structure. "
-            "Changing f-strings to concatenation does not fix SQL injection. "
-            "The user state may contain a virtual REPO_GUIDE.md. Its Fxxx handles and semantic paths are "
+            + mode_guidance
+            + "The user state may contain a virtual REPO_GUIDE.md. Its Fxxx handles and semantic paths are "
             "runtime aliases for real workspace files; use them directly in path arguments when useful. "
             "REPO_GUIDE card metadata is localization help, not vulnerability proof. If the packet also "
             "contains TRUSTED_SOURCE_WINDOWS, those windows are direct runtime source reads: their numbered "
@@ -339,7 +362,7 @@ class LazyLocalModelPlanner:
             "pytest produce deterministic scores. If arena_evaluate returns a winner, use arena_promote; "
             "only that winner may mutate the real workspace and promotion fails if source files changed "
             "since evaluation. Never merge candidate patches or manually promote a losing branch. "
-            "After a successful model-driven checked_edit or arena promotion, the runtime automatically runs "
+            "After a successful model-driven checked_edit, arena promotion, or declared artifact write, the runtime automatically runs "
             "the deterministic final validation gate. Do not spend a separate action on pytest, git-diff, "
             "or finish merely to prove a successful transactional edit; if automatic validation fails, use "
             "its failed_checks and assertion_lines to recover. Compare replacement code with the actual "

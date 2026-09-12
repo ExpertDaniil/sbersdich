@@ -307,10 +307,17 @@ class AgentState:
     def _event_payload(event: LoopEvent) -> dict[str, Any]:
         payload: dict[str, Any] = {"step": event.sequence, "phase": event.phase}
         if event.action:
+            arguments = dict(event.action.arguments)
+            replacement = arguments.get("replacement")
+            if event.action.name == "checked_edit" and isinstance(replacement, str):
+                # The current bytes and SHA are returned by checked_edit and the
+                # repository packet is rebuilt every turn. Re-sending a complete
+                # historical replacement only duplicates source text.
+                arguments["replacement"] = f"<omitted historical replacement: {len(replacement)} chars>"
             payload["action"] = {
                 "name": event.action.name,
-                "arguments": event.action.arguments,
-                "rationale": _bounded(event.action.rationale, 500),
+                "arguments": arguments,
+                "rationale": _bounded(event.action.rationale, 240),
             }
         if event.tool_result:
             payload["result"] = {

@@ -54,6 +54,37 @@ def _confirmed_model_mutation(action: AgentAction, result) -> bool:
     return False
 
 
+def _confirmed_artifact_write(
+    action: AgentAction,
+    result,
+    *,
+    workdir: Path,
+    artifact_paths: tuple[Path, ...],
+) -> bool:
+    """Return true only when a successful writer touched a declared artifact.
+
+    A declared artifact can be verified immediately. Waiting for another model
+    turn merely invites cosmetic rewrites (for example toggling a final newline)
+    and spends a complete prompt on an action the deterministic verifier can
+    decide without assistance.
+    """
+
+    if not result.ok or action.name not in {"write_file", "write_exact_text"}:
+        return False
+    raw_path = result.data.get("path")
+    if not isinstance(raw_path, str) or not raw_path:
+        return False
+    try:
+        candidate = Path(raw_path)
+        if not candidate.is_absolute():
+            candidate = workdir / candidate
+        candidate = canonical_path(candidate)
+        declared = {canonical_path(path) for path in artifact_paths}
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return candidate in declared and bool(declared) and all(path.exists() for path in declared)
+
+
 class AgentKernel:
     """Scientific-search loop: hypothesize -> probe -> observe -> verify/backtrack."""
 
@@ -305,17 +336,25 @@ class AgentKernel:
                 result = self.tool_bus.execute(action, execution_context)
                 state.record_tool_event(steps, action, result)
 
-                # A transactional model edit gets its deterministic proof immediately.
-                # This removes edit -> model -> pytest -> model -> finish on the happy path.
-                # Conditional tools are not auto-finalized merely because their catalog says
-                # they may mutate; the ToolResult must explicitly prove a source write.
+                # A transactional source edit or a completed declared artifact gets
+                # deterministic proof immediately. This removes an otherwise redundant
+                # model turn whose only useful action would be ``finish``.
                 project_checks = contract.project_checks
-                should_auto_verify = (
+                source_edit_ready = (
                     decision.mode == "fix"
                     and _confirmed_model_mutation(action, result)
-                    and plan.strategy.value != "deterministic"
                     and project_checks is not None
                     and bool(project_checks.commands)
+                )
+                artifact_ready = _confirmed_artifact_write(
+                    action,
+                    result,
+                    workdir=self.workdir,
+                    artifact_paths=tuple(rule.path for rule in contract.artifacts),
+                )
+                should_auto_verify = (
+                    plan.strategy.value != "deterministic"
+                    and (source_edit_ready or artifact_ready)
                 )
                 if should_auto_verify:
                     if validations >= self.limits.max_validations:
@@ -335,7 +374,7 @@ class AgentKernel:
                     last_validation = final_verification.feedback
                     auto_finish = AgentAction(
                         "finish",
-                        rationale="automatic deterministic validation after successful model-driven mutation",
+                        rationale="automatic deterministic validation after successful model-driven mutation or artifact write",
                     )
                     if steps < self.limits.max_steps:
                         steps += 1

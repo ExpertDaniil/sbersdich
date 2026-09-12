@@ -591,11 +591,19 @@ class SemanticCyberACIProvider(CyberACIProvider):
         real_path = str(data["path"])
         return self._decorate_path(data, real_path)
 
-    def _checked_edit(self, arguments: dict[str, Any]) -> ToolResult:
+    def _checked_edit(
+        self,
+        arguments: dict[str, Any],
+        *,
+        require_security_remediation: bool = False,
+    ) -> ToolResult:
         mapped = dict(arguments)
         original_path = mapped.get("path")
         mapped["path"] = self.semantic_context.resolve(original_path)
-        result = super()._checked_edit(mapped)
+        result = super()._checked_edit(
+            mapped,
+            require_security_remediation=require_security_remediation,
+        )
         if not result.data:
             return result
         data = dict(result.data)

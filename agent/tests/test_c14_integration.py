@@ -93,8 +93,8 @@ class C14ProductionIntegrationTests(unittest.TestCase):
             root = Path(tmp)
             (root / "clue.txt").write_text("original", encoding="utf-8")
             result = run_scaffold(root, "CTF: write the flag to `/app/flag.txt`.", [
-                AgentAction("write_exact_text", {"path": "/app/flag.txt", "content": "FLAG{new}"}),
                 AgentAction("write_exact_text", {"path": "/app/clue.txt", "content": "changed"}),
+                AgentAction("write_exact_text", {"path": "/app/flag.txt", "content": "FLAG{new}"}),
                 AgentAction("finish"),
             ])
             self.assertFalse(result.succeeded)

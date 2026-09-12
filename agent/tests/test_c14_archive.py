@@ -166,8 +166,10 @@ class C14ArchiveTests(unittest.TestCase):
             self.assertEqual(evidence.read_bytes(), case.input_content)
             self.assertEqual((workdir / "fragment.py").read_bytes(), b"def partial(\n")
             self.assertFalse((install / case.output_path).exists())
-            self.assertEqual(len(server.calls), 5)
-            self.assertEqual(result["metrics"]["model_usage"]["requests"], 5)
+            # read -> transform -> write; the declared artifact is verified
+            # immediately without spending calls on read-back + finish.
+            self.assertEqual(len(server.calls), 3)
+            self.assertEqual(result["metrics"]["model_usage"]["requests"], 3)
 
     def test_packaged_cli_solves_three_observation_driven_ctf_cases(self):
         for case in build_ctf_cases():

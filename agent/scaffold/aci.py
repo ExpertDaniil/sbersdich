@@ -34,6 +34,7 @@ from agent.core.workspace import (
     run_workspace_command,
     search_workspace_text,
 )
+from agent.tools.security_scan import scan_python_source
 
 from .contracts import CapabilityLevel, ExecutionContext, ToolSpec
 from .security_relevance import SecurityAwareRepositoryDistiller
@@ -319,7 +320,10 @@ class CyberACIProvider:
             if action.name == "view_window":
                 return self._view_window(action.arguments)
             if action.name == "checked_edit":
-                return self._checked_edit(action.arguments)
+                return self._checked_edit(
+                    action.arguments,
+                    require_security_remediation=context.decision.mode == "fix",
+                )
             if action.name == "run_check":
                 return self._run_check(action.arguments)
             return ToolResult(False, f"unknown Cyber ACI action: {action.name}")
@@ -509,7 +513,12 @@ class CyberACIProvider:
             data,
         )
 
-    def _checked_edit(self, arguments: dict[str, Any]) -> ToolResult:
+    def _checked_edit(
+        self,
+        arguments: dict[str, Any],
+        *,
+        require_security_remediation: bool = False,
+    ) -> ToolResult:
         self._only(
             arguments,
             {"path", "start_line", "end_line", "replacement", "expected_sha256"},
@@ -603,6 +612,41 @@ class CyberACIProvider:
                     "guard": "static-parse",
                 },
             )
+
+        if require_security_remediation and target.suffix.casefold() == ".py":
+            relative = target.relative_to(self.workdir).as_posix()
+            before_findings = scan_python_source(old_text, relative)
+            edited_findings = []
+            edited_functions: set[str] = set()
+            for finding in before_findings:
+                match = re.search(r":(\d+)\s+\(([^)]+)\)$", finding.location)
+                if match and start_line <= int(match.group(1)) <= end_line:
+                    edited_findings.append(finding)
+                    edited_functions.add(match.group(2))
+            after_findings = scan_python_source(new_text, relative)
+            remaining = [
+                finding
+                for finding in after_findings
+                if any(f"({name})" in finding.location for name in edited_functions)
+            ]
+            if edited_findings and remaining:
+                return ToolResult(
+                    False,
+                    "checked_edit rejected before write: the edited function still has a dynamic SQL finding; "
+                    "use terminating rejection guards and interpolate only finite canonical locals "
+                    "(for a case-insensitive direction, validate direction.lower() then derive direction.upper())",
+                    {
+                        "path": relative,
+                        "sha256": current_sha,
+                        "written": False,
+                        "guard": "security-remediation",
+                        "before_findings_in_range": len(edited_findings),
+                        "remaining_findings_in_function": len(remaining),
+                        "remaining_evidence": [finding.evidence for finding in remaining[:3]],
+                    },
+                )
+            if edited_findings:
+                checks = checks + ({"name": "security-remediation", "passed": True},)
 
         diff = "\n".join(
             difflib.unified_diff(

@@ -143,7 +143,8 @@ class EnigmaRecoveryTests(unittest.TestCase):
             result = self.kernel(root, planner).run("Create a file at `/app/result.txt` whose content is exactly `done`.")
             self.assertTrue(result.succeeded, result.reason)
             self.assertIn("unavailable", planner.contexts[1].state_snapshot["planner_feedback"])
-            self.assertEqual(len(planner.contexts), 3)
+            self.assertEqual(len(planner.contexts), 2)
+            self.assertIn("artifact write", result.events[-1].action.rationale)
 
     def test_planner_errors_are_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -181,6 +182,7 @@ class EnigmaRecoveryTests(unittest.TestCase):
             self.assertEqual(result.steps_used, 1)
             self.assertEqual(len(planner.contexts), 1)
             self.assertLess(planner.contexts[0].remaining_seconds, 19)
+            self.assertIn("artifact write", result.events[-1].action.rationale)
 
     def test_hypothesis_ids_select_existing_nodes_and_cannot_fake_backtracking(self):
         state = AgentState("goal", "general")
@@ -291,6 +293,40 @@ class SqlAllowlistTests(unittest.TestCase):
     def test_raise_guard_is_supported(self):
         source = self.SAFE.replace('field = "title"', 'raise ValueError("invalid field")')
         self.assertEqual(scan_python_source(source, "query.py"), [])
+
+    def test_pure_direction_normalization_does_not_erase_field_guard(self):
+        source = '''async def list_events(conn, order_by, direction):
+    if order_by not in ("created_at", "severity", "actor"):
+        raise ValueError("unsupported field")
+    direction_key = direction.lower()
+    if direction_key not in ("asc", "desc"):
+        raise ValueError("unsupported direction")
+    direction_sql = direction_key.upper()
+    query = f"SELECT id FROM events ORDER BY {order_by} {direction_sql}"
+    return await conn.fetch(query)
+'''
+
+        self.assertEqual(scan_python_source(source, "repository.py"), [])
+
+    def test_unmodified_module_allowlists_are_finite_but_mutated_ones_are_not(self):
+        source = '''ALLOWED_FIELDS = {"created_at", "severity", "actor"}
+ALLOWED_DIRECTIONS = {"asc", "desc"}
+
+async def list_events(conn, order_by, direction):
+    if order_by not in ALLOWED_FIELDS:
+        raise ValueError("unsupported field")
+    if direction.lower() not in ALLOWED_DIRECTIONS:
+        raise ValueError("unsupported direction")
+    query = f"SELECT id FROM events ORDER BY {order_by} {direction}"
+    return await conn.fetch(query)
+'''
+
+        self.assertEqual(scan_python_source(source, "repository.py"), [])
+        mutated = source.replace(
+            "async def list_events",
+            'ALLOWED_FIELDS.add("runtime_value")\n\nasync def list_events',
+        )
+        self.assertTrue(scan_python_source(mutated, "repository.py"))
 
     def test_verifier_scans_current_source_instead_of_pre_edit_event(self):
         with tempfile.TemporaryDirectory() as tmp:
